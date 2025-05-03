@@ -38,3 +38,7 @@ Dane/**
 *.jpg
 *.tif
 *.tiff
+
+# Intermediate files
+/build
+/out
