@@ -3,6 +3,7 @@
 // source: https://www.youtube.com/watch?v=Iz6feoh9We8&t=0s
 // author: NoNumberMan
 // accessed 27th April 2025
+// Code provided in the tutorial was adjusted to project needs.
 
 
 #include <CL/cl.h>
@@ -13,13 +14,19 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <filesystem>
+#include <iostream>
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 
 #define TRACE(fmt, ...)                                                            \
     {                                                                           \
         printf("[TRACE_FMT] %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); \
     };
 
-// Function to load kernel source from a file
 std::string loadKernelSource(const std::string& filePath) {
     std::ifstream file(filePath);
     if (!file.is_open()) {
@@ -30,7 +37,15 @@ std::string loadKernelSource(const std::string& filePath) {
     return oss.str();
 }
 
+const std::string REPOROOT = std::filesystem::current_path().parent_path().string();
+const std::string KERNELS = REPOROOT + "/kernels/";
+const std::string KERNEL_FILE = KERNELS + "kernels.cl";
+const std::string IMAGES = REPOROOT + "/images/";
+
 int main(int argc, char* args[]) {
+
+    std::cout << cv::getBuildInformation() << std::endl;
+
     TRACE("PR25LAAW05_SUPERPIXEL application started");
 
     TRACE("Getting platform ids");
@@ -75,12 +90,13 @@ int main(int argc, char* args[]) {
 
     TRACE("Creating command queue");
     cl_int commandQueueResult;
-    cl_command_queue commandQueue = clCreateCommandQueue(context, device, 0, &commandQueueResult);
+    cl_command_queue_properties properties = 0;
+    cl_command_queue commandQueue = clCreateCommandQueueWithProperties(context, device, &properties, &commandQueueResult);
     assert(commandQueueResult == CL_SUCCESS);
     TRACE("Command queue created successfully");
 
     TRACE("Loading kernel source");
-    std::string kernelSource = loadKernelSource("../kernels/vector_sum.cl");
+    std::string kernelSource = loadKernelSource(KERNEL_FILE);
     const char* programSource = kernelSource.c_str();
     size_t programSourceLength = kernelSource.size();
 
@@ -102,60 +118,84 @@ int main(int argc, char* args[]) {
     }
     TRACE("Program built successfully");
 
-    TRACE("Creating buffers");
-    cl_int bufferResult;
+    cv::Mat source_image = cv::imread(IMAGES + "sample.jpg");
+    if (source_image.empty()) {
+        std::cerr << "Failed to load image\n";
+        return -1;
+    }
+    cv::Mat sourceRGBA;
+    cv::cvtColor(source_image, sourceRGBA, cv::COLOR_BGR2RGBA);
 
-    // Input data
-    float vector_a_data[2] = {1.0f, 2.0f};
-    float vector_b_data[2] = {3.0f, 4.0f};
+    cl_image_desc desc = {};
+    desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+    desc.image_width = sourceRGBA.cols;
+    desc.image_height = sourceRGBA.rows;
+    desc.image_depth = 0;
+    desc.image_array_size = 1;
+    desc.image_row_pitch = 0;
+    desc.image_slice_pitch = 0;
+    desc.num_mip_levels = 0;
+    desc.num_samples = 0;
+    desc.buffer = nullptr;
 
-    // Create input buffers
-    cl_mem vector_a = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(float) * 2, vector_a_data, &bufferResult);
-    assert(bufferResult == CL_SUCCESS);
-    cl_mem vector_b = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, sizeof(float) * 2, vector_b_data, &bufferResult);
-    assert(bufferResult == CL_SUCCESS);
-
-    // Create output buffer
-    cl_mem vector_c = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(float) * 2, nullptr, &bufferResult);
-    assert(bufferResult == CL_SUCCESS);
-    TRACE("Buffers created successfully");
-
-    TRACE("Setting kernel arguments");
+    cl_image_format format = {};
+    format.image_channel_order = CL_RGBA;
+    format.image_channel_data_type = CL_UNORM_INT8;
+    
+    cl_mem image_in = clCreateImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                    &format, &desc, sourceRGBA.data, &contextResult);
+    assert(contextResult == CL_SUCCESS);
+    cl_mem image_out = clCreateImage(context, CL_MEM_READ_WRITE,
+                                     &format, &desc, nullptr, &contextResult);
+    assert(contextResult == CL_SUCCESS);
+    
     cl_int kernelResult;
-    cl_kernel kernel = clCreateKernel(program, "vector_sum", &kernelResult);
+    cl_kernel black_kernel = clCreateKernel(program, "make_black_image", &kernelResult);
+    assert(kernelResult == CL_SUCCESS);
+    cl_kernel increment_kernel = clCreateKernel(program, "increment_pixel", &kernelResult);
     assert(kernelResult == CL_SUCCESS);
 
-    cl_int argResult = clSetKernelArg(kernel, 0, sizeof(cl_mem), &vector_a);
+    cl_int argResult;
+    argResult = clSetKernelArg(black_kernel, 0, sizeof(cl_mem), &image_in);
     assert(argResult == CL_SUCCESS);
-    argResult = clSetKernelArg(kernel, 1, sizeof(cl_mem), &vector_b);
+    argResult = clSetKernelArg(black_kernel, 1, sizeof(cl_mem), &image_out);
     assert(argResult == CL_SUCCESS);
-    argResult = clSetKernelArg(kernel, 2, sizeof(cl_mem), &vector_c);
+    argResult = clSetKernelArg(increment_kernel, 0, sizeof(cl_mem), &image_out);
     assert(argResult == CL_SUCCESS);
-    const int count{2};
-    argResult = clSetKernelArg(kernel, 3, sizeof(int), &count);
-    assert(argResult == CL_SUCCESS);
-    TRACE("Kernel arguments set successfully");
 
-    TRACE("Enqueuing kernel");
-    size_t globalWorkSize[1] = {2}; // Process 2 elements
-    cl_int enqueueResult = clEnqueueNDRangeKernel(commandQueue, kernel, 1, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+    size_t globalWorkSize[2] = {static_cast<size_t>(sourceRGBA.cols), static_cast<size_t>(sourceRGBA.rows)};
+    cl_int enqueueResult = clEnqueueNDRangeKernel(commandQueue, black_kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
     assert(enqueueResult == CL_SUCCESS);
-    TRACE("Kernel enqueued successfully");
 
-    TRACE("Reading back results");
-    float vector_c_data[2];
-    cl_int readResult = clEnqueueReadBuffer(commandQueue, vector_c, CL_TRUE, 0, sizeof(float) * 2, vector_c_data, 0, nullptr, nullptr);
-    assert(readResult == CL_SUCCESS);
-    TRACE("Results read successfully");
-
-    TRACE("Output:");
-    for (int i = 0; i < 2; ++i) {
-        printf("vector_c[%d] = %f\n", i, vector_c_data[i]);
+    for (int i = 0; i < 50; ++i)
+    {
+        enqueueResult = clEnqueueNDRangeKernel(commandQueue, increment_kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+        assert(enqueueResult == CL_SUCCESS);
     }
+    clFinish(commandQueue);
 
-    // Cleanup
-    clReleaseMemObject(vector_a);
-    clReleaseMemObject(vector_b);
-    clReleaseMemObject(vector_c);
-    clReleaseKernel(kernel);
+    TRACE("Reading back image");
+    cv::Mat outputRGBA(sourceRGBA.size(), sourceRGBA.type());
+    size_t origin[3] = {0, 0, 0};
+    size_t region[3] = {static_cast<size_t>(sourceRGBA.cols), static_cast<size_t>(sourceRGBA.rows), 1};
+    cl_int readResult = clEnqueueReadImage(commandQueue, image_out, CL_TRUE, origin, region, 0, 0, outputRGBA.data, 0, nullptr, nullptr);
+    assert(readResult == CL_SUCCESS);
+    TRACE("Image read back successfully");
+    TRACE("Writing output image");
+    cv::imwrite(IMAGES + "output.jpg", outputRGBA);
+    TRACE("Output image written successfully");
+
+    TRACE("Releasing resources");
+    clReleaseMemObject(image_in);
+    clReleaseMemObject(image_out);
+    clReleaseKernel(black_kernel);
+    clReleaseKernel(increment_kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(commandQueue);
+    clReleaseContext(context);
+    TRACE("Resources released successfully");
+
+    TRACE("PR25LAAW05_SUPERPIXEL application finished");
+
+    return 0;
 }
