@@ -65,31 +65,60 @@ int main(int argc, char* args[]) {
     TRACE("Number of platforms: %u", platformCount);
 
     TRACE("Getting device info");
-    cl_device_id device = nullptr;
-    for(int i = 0; i < platformCount && device == nullptr; ++i)
-    {
-        cl_device_id devices[64];
-        unsigned int deviceCount;
-        cl_int deviceResult = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_GPU, 64, devices, &deviceCount);
+    // cl_device_id device = nullptr;
+    // for(int i = 0; i < platformCount && device == nullptr; ++i)
+    // {
+    //     cl_device_id devices[64];
+    //     unsigned int deviceCount;
+    //     cl_int deviceResult = clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_GPU, 64, devices, &deviceCount);
 
-        if(deviceResult == CL_SUCCESS)
-        {
-            TRACE("deviceResult SUCCESS. Number of devices: %u", deviceCount);
-            for(int j = 0; j < deviceCount; j++)
-            {
-                char vendorName[256];
-                size_t vendorNameLength;
-                cl_int deviceInfoResult = clGetDeviceInfo(devices[j], CL_DEVICE_VENDOR, 256, vendorName, &vendorNameLength);
-                TRACE("Found device vendor: %s", vendorName);
-                if(deviceInfoResult == CL_SUCCESS && std::string(vendorName).substr(0, vendorNameLength) == "NVIDIA Corporation")
-                {
-                    device = devices[j];
-                    TRACE("Choosing dedicated NVIDIA GPU found");
-                    break;
-                }
-            }
-        }
+    //     if(deviceResult == CL_SUCCESS)
+    //     {
+    //         TRACE("deviceResult SUCCESS. Number of devices: %u", deviceCount);
+    //         for(int j = 0; j < deviceCount; j++)
+    //         {
+    //             char vendorName[256];
+    //             size_t vendorNameLength;
+    //             cl_int deviceInfoResult = clGetDeviceInfo(devices[j], CL_DEVICE_VENDOR, 256, vendorName, &vendorNameLength);
+    //             TRACE("Found device vendor: %s", vendorName);
+    //             if(deviceInfoResult == CL_SUCCESS && std::string(vendorName).substr(0, vendorNameLength) == "NVIDIA Corporation")
+    //             {
+    //                 device = devices[j];
+    //                 TRACE("Choosing dedicated NVIDIA GPU found");
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // }
+
+    // New plattform selection code
+    TRACE("Available OpenCL platforms:");
+    for (unsigned int i = 0; i < platformCount; ++i) {
+        char name[256];
+        clGetPlatformInfo(platforms[i], CL_PLATFORM_NAME, sizeof(name), name, nullptr);
+        TRACE("Platform %u: %s", i, name);
     }
+
+
+    cl_device_id device = nullptr;
+    int platformIndex = 0; // default
+    if (argc > 2) {
+        platformIndex = std::stoi(args[2]);
+    }
+    if (platformIndex >= static_cast<int>(platformCount)) {
+        std::cerr << "Invalid platform index.\n";
+        return -1;
+    }
+    
+    cl_device_id devices[64];
+    unsigned int deviceCount;
+    cl_int deviceResult = clGetDeviceIDs(platforms[platformIndex], CL_DEVICE_TYPE_GPU, 64, devices, &deviceCount);
+    if (deviceResult != CL_SUCCESS || deviceCount == 0) {
+        std::cerr << "No GPU devices found on selected platform.\n";
+        return -1;
+    }
+    device = devices[0]; // Use first device by default
+    TRACE("Selected platform index %d", platformIndex);
 
     TRACE("Creating context");
     cl_int contextResult;
@@ -155,7 +184,7 @@ int main(int argc, char* args[]) {
     cl_mem image_in = clCreateImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                                     &format, &desc, sourceRGBA.data, &contextResult);
     assert(contextResult == CL_SUCCESS);
-    cl_mem image_out = clCreateImage(context, CL_MEM_READ_WRITE,
+    cl_mem image_out = clCreateImage(context, CL_MEM_WRITE_ONLY,
                                      &format, &desc, nullptr, &contextResult);
     assert(contextResult == CL_SUCCESS);
 
