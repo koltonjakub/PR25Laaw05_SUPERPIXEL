@@ -69,38 +69,40 @@ __kernel void increment_pixel(read_write image2d_t img)
 __constant sampler_t imageSampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_LINEAR;
 
 float3 rgb_to_hsv(float3 c) {
-    float4 K = (float4)(0.0f, -1.0f/3.0f, 2.0f/3.0f, -1.0f);
-    float4 p = c.g < c.b ? (float4)(c.bg, K.wz) : (float4)(c.gb, K.xy);
-    float4 q = c.r < p.x ? (float4)(p.xyw, c.r) : (float4)(c.r, p.yzx);
+   float4 K = (float4)(0.0f, -1.0f/3.0f, 2.0f/3.0f, -1.0f);
+   float4 p = c.g < c.b ? (float4)(c.bg, K.wz) : (float4)(c.gb, K.xy);
+   float4 q = c.r < p.x ? (float4)(p.xyw, c.r) : (float4)(c.r, p.yzx);
 
-    float d = q.x - min(q.w, q.y);
-    float e = 1.0e-10f;
+   float d = q.x - min(q.w, q.y);
+   float e = 1.0e-10f;
 
-    float h = fabs(q.z + (q.w - q.y) / (6.0f * d + e));
-    float s = d / (q.x + e);
-    float v = q.x;
+   float h = fabs(q.z + (q.w - q.y) / (6.0f * d + e));
+   float s = d / (q.x + e);
+   float v = q.x;
 
-    return (float3)(h, s, v);
+   return (float3)(h, s, v);
 }
 
 __kernel void hsv_binary_filter(__read_only image2d_t inputImage, __write_only image2d_t outputImage) {
-    const int2 coord = (int2)(get_global_id(0), get_global_id(1));
-    float4 rgba = convert_float4(read_imageui(inputImage, imageSampler, coord)) / 255.0f;
+   const int2 coord = (int2)(get_global_id(0), get_global_id(1));
+   float4 rgba = read_imagef(inputImage, imageSampler, coord);
 
-    float3 hsv = rgb_to_hsv(rgba.xyz);
+   float3 hsv = rgb_to_hsv(rgba.xyz);
 
-    // Zakres koloru zielonego i żółto-zielonego w HSV:
-    // Hue w [0.22, 0.33], Saturation i Value powyżej minimalnego progu
-    const float h_min = 0.22f; // około 80° (zielony)
-    const float h_max = 0.33f; // około 120° (żółto-zielony)
-    const float s_min = 0.3f;
-    const float v_min = 0.2f;
+   // Zakres koloru zielonego i żółto-zielonego w HSV:
+   // Hue w [0.22, 0.33], Saturation i Value powyżej minimalnego progu
+   const float h_min = 0.05f; // około 80° (zielony)
+   const float h_max = 0.60f; // około 120° (żółto-zielony)
+   const float s_min = 0.1f;
+   const float v_min = 0.3f;
 
-    int is_green = hsv.x >= h_min && hsv.x <= h_max &&
-                   hsv.y >= s_min &&
-                   hsv.z >= v_min;
+   int is_green = hsv.x >= h_min && hsv.x <= h_max &&
+                  hsv.y >= s_min &&
+                  hsv.z >= v_min;
 
-    // Binarna maska: biały jeśli w zakresie, czarny jeśli nie
-    uint4 output = (uint4)(is_green * 255, is_green * 255, is_green * 255, 255);
-    write_imageui(outputImage, coord, output);
+   // Binarna maska: biały jeśli w zakresie, czarny jeśli nie
+   float4 output = (float4)(is_green, is_green, is_green, 1);
+   // float4 output = (float4)(hsv.x, hsv.y, hsv.z, 1.0f);
+
+   write_imagef(outputImage, coord, output);
 }

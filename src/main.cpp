@@ -16,6 +16,7 @@
 #include <vector>
 #include <filesystem>
 #include <iostream>
+#include <map>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -41,6 +42,14 @@ const std::string REPOROOT = std::filesystem::current_path().parent_path().strin
 const std::string KERNELS = REPOROOT + "/kernels/";
 const std::string KERNEL_FILE = KERNELS + "kernels.cl";
 const std::string IMAGES = REPOROOT + "/images/";
+const std::map<std::string, std::string> IMAGES_MAP = {
+    {"3",  IMAGES + "(BARCODE)0003.tif"},
+    {"7",  IMAGES + "(BARCODE)0007.tif"},
+    {"15", IMAGES + "(BARCODE)0015.tif"},
+    {"5",  IMAGES + "BG_0005.tif"},
+    {"12", IMAGES + "BG_0012.tif"},
+    {"14", IMAGES + "BG_0014.tif"},
+};
 
 int main(int argc, char* args[]) {
 
@@ -118,7 +127,8 @@ int main(int argc, char* args[]) {
     }
     TRACE("Program built successfully");
 
-    cv::Mat source_image = cv::imread(IMAGES + "sample.jpg");
+    TRACE("Loading image %s", IMAGES_MAP.at(args[1]).c_str());
+    cv::Mat source_image = cv::imread(IMAGES_MAP.at(args[1]).c_str());
     if (source_image.empty()) {
         std::cerr << "Failed to load image\n";
         return -1;
@@ -148,30 +158,19 @@ int main(int argc, char* args[]) {
     cl_mem image_out = clCreateImage(context, CL_MEM_READ_WRITE,
                                      &format, &desc, nullptr, &contextResult);
     assert(contextResult == CL_SUCCESS);
-    
+
     cl_int kernelResult;
-    cl_kernel black_kernel = clCreateKernel(program, "make_black_image", &kernelResult);
-    assert(kernelResult == CL_SUCCESS);
-    cl_kernel increment_kernel = clCreateKernel(program, "increment_pixel", &kernelResult);
+    cl_kernel hsv_binary_kernel = clCreateKernel(program, "hsv_binary_filter", &kernelResult);
     assert(kernelResult == CL_SUCCESS);
 
     cl_int argResult;
-    argResult = clSetKernelArg(black_kernel, 0, sizeof(cl_mem), &image_in);
+    argResult = clSetKernelArg(hsv_binary_kernel, 0, sizeof(cl_mem), &image_in);
     assert(argResult == CL_SUCCESS);
-    argResult = clSetKernelArg(black_kernel, 1, sizeof(cl_mem), &image_out);
-    assert(argResult == CL_SUCCESS);
-    argResult = clSetKernelArg(increment_kernel, 0, sizeof(cl_mem), &image_out);
+    argResult = clSetKernelArg(hsv_binary_kernel, 1, sizeof(cl_mem), &image_out);
     assert(argResult == CL_SUCCESS);
 
     size_t globalWorkSize[2] = {static_cast<size_t>(sourceRGBA.cols), static_cast<size_t>(sourceRGBA.rows)};
-    cl_int enqueueResult = clEnqueueNDRangeKernel(commandQueue, black_kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
-    assert(enqueueResult == CL_SUCCESS);
-
-    for (int i = 0; i < 50; ++i)
-    {
-        enqueueResult = clEnqueueNDRangeKernel(commandQueue, increment_kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
-        assert(enqueueResult == CL_SUCCESS);
-    }
+    cl_int enqueueResult = clEnqueueNDRangeKernel(commandQueue, hsv_binary_kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
     clFinish(commandQueue);
 
     TRACE("Reading back image");
@@ -188,8 +187,7 @@ int main(int argc, char* args[]) {
     TRACE("Releasing resources");
     clReleaseMemObject(image_in);
     clReleaseMemObject(image_out);
-    clReleaseKernel(black_kernel);
-    clReleaseKernel(increment_kernel);
+    clReleaseKernel(hsv_binary_kernel);
     clReleaseProgram(program);
     clReleaseCommandQueue(commandQueue);
     clReleaseContext(context);

@@ -25,4 +25,4 @@ Runnig the application:
     cd build
     cmake ..
     make
-    (sudo) ./PR25Laaw05_SUPERPIXEL - I had troubles to run this, as well as clinfo and other opencl related commands without sudo on Ubuntu 24.04 LTS / 22.04 LTS, issue lies in the priviliges to the nvidia device within root dir.
+    (sudo) ./PR25Laaw05_SUPERPIXEL <IM_NR> - I had troubles to run this, as well as clinfo and other opencl related commands without sudo on Ubuntu 24.04 LTS / 22.04 LTS, issue lies in the priviliges to the nvidia device within root dir. IM_NR corresponds to the number tied to the number in the .tif data file name.
