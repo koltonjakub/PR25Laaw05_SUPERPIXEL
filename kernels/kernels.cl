@@ -67,7 +67,7 @@
 //    write_imagef(imgDst, pos, pixel);
 // }
 
-float3 rgb_to_hsv(float3 c) {
+float4 rgb_to_hsv(float3 c) {
     float r = c.x;
     float g = c.y;
     float b = c.z;
@@ -92,16 +92,19 @@ float3 rgb_to_hsv(float3 c) {
     float s = (maxc == 0.0f) ? 0.0f : (delta / maxc);
     float v = maxc;
 
-    return (float3)(h, s, v);
+    return (float4)(h, s, v, 0.0);
 }
 
 __constant sampler_t imageSampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_LINEAR;
 
 __kernel void hsv_binary_filter(read_only image2d_t inputImage,
-                                write_only image2d_t outputImage) {
+                                write_only image2d_t MaskImage,
+                                write_only image2d_t HSVImage) 
+{
     int2 coord = (int2)(get_global_id(0), get_global_id(1));
     float4 rgba = read_imagef(inputImage, imageSampler, coord);
-    float3 hsv = rgb_to_hsv(rgba.xyz);
+    float4 hsv = rgb_to_hsv(rgba.xyz);
+    write_imagef(HSVImage, coord, hsv);
 
     const float h_min = 0.22f;
     const float h_max = 0.33f;
@@ -112,5 +115,5 @@ __kernel void hsv_binary_filter(read_only image2d_t inputImage,
                    hsv.y >= s_min && hsv.z >= v_min;
 
     float4 output = (float4)(is_green, is_green, is_green, 1.0f);
-    write_imagef(outputImage, coord, output);
+    write_imagef(MaskImage, coord, output);
 }

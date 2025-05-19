@@ -184,8 +184,11 @@ int main(int argc, char* args[]) {
     cl_mem image_in = clCreateImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                                     &format, &desc, sourceRGBA.data, &contextResult);
     assert(contextResult == CL_SUCCESS);
-    cl_mem image_out = clCreateImage(context, CL_MEM_WRITE_ONLY,
+    cl_mem mask_image = clCreateImage(context, CL_MEM_WRITE_ONLY,
                                      &format, &desc, nullptr, &contextResult);
+    assert(contextResult == CL_SUCCESS);
+    cl_mem hsv_image = clCreateImage(context, CL_MEM_WRITE_ONLY,
+                                    &format, &desc, nullptr, &contextResult);
     assert(contextResult == CL_SUCCESS);
 
     cl_int kernelResult;
@@ -195,7 +198,9 @@ int main(int argc, char* args[]) {
     cl_int argResult;
     argResult = clSetKernelArg(hsv_binary_kernel, 0, sizeof(cl_mem), &image_in);
     assert(argResult == CL_SUCCESS);
-    argResult = clSetKernelArg(hsv_binary_kernel, 1, sizeof(cl_mem), &image_out);
+    argResult = clSetKernelArg(hsv_binary_kernel, 1, sizeof(cl_mem), &mask_image);
+    assert(argResult == CL_SUCCESS);
+    argResult = clSetKernelArg(hsv_binary_kernel, 2, sizeof(cl_mem), &hsv_image);
     assert(argResult == CL_SUCCESS);
 
     size_t globalWorkSize[2] = {static_cast<size_t>(sourceRGBA.cols), static_cast<size_t>(sourceRGBA.rows)};
@@ -206,16 +211,24 @@ int main(int argc, char* args[]) {
     cv::Mat outputRGBA(sourceRGBA.size(), sourceRGBA.type());
     size_t origin[3] = {0, 0, 0};
     size_t region[3] = {static_cast<size_t>(sourceRGBA.cols), static_cast<size_t>(sourceRGBA.rows), 1};
-    cl_int readResult = clEnqueueReadImage(commandQueue, image_out, CL_TRUE, origin, region, 0, 0, outputRGBA.data, 0, nullptr, nullptr);
+    cl_int readResult = clEnqueueReadImage(commandQueue, mask_image, CL_TRUE, origin, region, 0, 0, outputRGBA.data, 0, nullptr, nullptr);
     assert(readResult == CL_SUCCESS);
     TRACE("Image read back successfully");
-    TRACE("Writing output image");
-    cv::imwrite(IMAGES + "output.jpg", outputRGBA);
-    TRACE("Output image written successfully");
+    TRACE("Writing mask_image image");
+    cv::imwrite(IMAGES + "mask_image.jpg", outputRGBA);
+    TRACE("mask_image written successfully");
+
+    TRACE("Reading back image");
+    readResult = clEnqueueReadImage(commandQueue, hsv_image, CL_TRUE, origin, region, 0, 0, outputRGBA.data, 0, nullptr, nullptr);
+    assert(readResult == CL_SUCCESS);
+    TRACE("Image read back successfully");
+    TRACE("Writing hsv_image image");
+    cv::imwrite(IMAGES + "hsv_image.jpg", outputRGBA);
+    TRACE("hsv_image written successfully");
 
     TRACE("Releasing resources");
     clReleaseMemObject(image_in);
-    clReleaseMemObject(image_out);
+    clReleaseMemObject(mask_image);
     clReleaseKernel(hsv_binary_kernel);
     clReleaseProgram(program);
     clReleaseCommandQueue(commandQueue);
