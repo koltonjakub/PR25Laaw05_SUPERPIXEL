@@ -184,10 +184,10 @@ int main(int argc, char* args[]) {
     cl_mem image_in = clCreateImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                                     &format, &desc, sourceRGBA.data, &contextResult);
     assert(contextResult == CL_SUCCESS);
-    cl_mem mask_image = clCreateImage(context, CL_MEM_WRITE_ONLY,
+    cl_mem mask_image = clCreateImage(context, CL_MEM_READ_WRITE,
                                      &format, &desc, nullptr, &contextResult);
     assert(contextResult == CL_SUCCESS);
-    cl_mem hsv_image = clCreateImage(context, CL_MEM_WRITE_ONLY,
+    cl_mem hsv_image = clCreateImage(context, CL_MEM_READ_WRITE,
                                     &format, &desc, nullptr, &contextResult);
     assert(contextResult == CL_SUCCESS);
 
@@ -226,9 +226,83 @@ int main(int argc, char* args[]) {
     cv::imwrite(IMAGES + "hsv_image.jpg", outputRGBA);
     TRACE("hsv_image written successfully");
 
+    // ---- ADDING assignPixelsToClusters ----
+
+    TRACE("Creating assignPixelsToClusters kernel");
+    cl_kernel cluster_kernel = clCreateKernel(program, "assignPixelsToClusters", &kernelResult);
+    assert(kernelResult == CL_SUCCESS);
+
+    const int width = sourceRGBA.cols;
+    const int height = sourceRGBA.rows;
+    const int numClusters = 100; // Tune this to your needs
+    const float m = 10.0f;       // Compactness factor for SLIC
+    const int step = static_cast<int>(sqrt((width * height) / numClusters));
+    int clustersX = width / step;
+    int clustersY = height / step;
+
+    std::vector<float> clusterData(numClusters * 5);
+
+    int c = 0;
+    for (int y = step / 2; y < height && c < numClusters; y += step) {
+        for (int x = step / 2; x < width && c < numClusters; x += step) {
+            clusterData[c * 5 + 0] = 0.5f;         // H
+            clusterData[c * 5 + 1] = 0.5f;         // S
+            clusterData[c * 5 + 2] = 0.5f;         // V
+            clusterData[c * 5 + 3] = (float)x;     // x
+            clusterData[c * 5 + 4] = (float)y;     // y
+            ++c;
+        }
+    }
+
+    // Buffers for clusters, labels, and distances
+    cl_mem clusterBuffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                          sizeof(float) * clusterData.size(), clusterData.data(), &contextResult);
+    assert(contextResult == CL_SUCCESS);
+
+    cl_mem labelBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+                                        sizeof(int) * width * height, nullptr, &contextResult);
+    assert(contextResult == CL_SUCCESS);
+
+    cl_mem distanceBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+                                           sizeof(float) * width * height, nullptr, &contextResult);
+    assert(contextResult == CL_SUCCESS);
+
+    // Set kernel args
+    clSetKernelArg(cluster_kernel, 0, sizeof(cl_mem), &hsv_image);
+    clSetKernelArg(cluster_kernel, 1, sizeof(int), &width);
+    clSetKernelArg(cluster_kernel, 2, sizeof(int), &height);
+    clSetKernelArg(cluster_kernel, 3, sizeof(cl_mem), &clusterBuffer);
+    clSetKernelArg(cluster_kernel, 4, sizeof(int), &numClusters);
+    clSetKernelArg(cluster_kernel, 5, sizeof(float), &m);
+    clSetKernelArg(cluster_kernel, 6, sizeof(cl_mem), &labelBuffer);
+    clSetKernelArg(cluster_kernel, 7, sizeof(cl_mem), &distanceBuffer);
+
+    TRACE("Launching assignPixelsToClusters kernel");
+    clEnqueueNDRangeKernel(commandQueue, cluster_kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+    clFinish(commandQueue);
+    TRACE("assignPixelsToClusters kernel finished");
+
+    // (Optional) Read back labels to check or visualize
+    std::vector<int> labels(width * height);
+    clEnqueueReadBuffer(commandQueue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
+
+    // Save label map as grayscale image (basic visualization)
+    cv::Mat labelImg(height, width, CV_8UC1);
+    for (int i = 0; i < labels.size(); ++i) {
+        labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255); // crude mapping
+    }
+    cv::imwrite(IMAGES + "label_image.jpg", labelImg);
+    TRACE("label_image written successfully");
+
+    // Release new resources
     TRACE("Releasing resources");
+    clReleaseMemObject(clusterBuffer);
+    clReleaseMemObject(labelBuffer);
+    clReleaseMemObject(distanceBuffer);
+    clReleaseKernel(cluster_kernel);
     clReleaseMemObject(image_in);
     clReleaseMemObject(mask_image);
+    clReleaseMemObject(hsv_image);
     clReleaseKernel(hsv_binary_kernel);
     clReleaseProgram(program);
     clReleaseCommandQueue(commandQueue);

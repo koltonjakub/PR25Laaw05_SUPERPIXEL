@@ -117,3 +117,62 @@ __kernel void hsv_binary_filter(read_only image2d_t inputImage,
     float4 output = (float4)(is_green, is_green, is_green, 1.0f);
     write_imagef(MaskImage, coord, output);
 }
+
+__kernel void assignPixelsToClusters(
+    read_only image2d_t hsvImage,       // combined HSV input image
+    const int width,
+    const int height,
+    __global const float* clusters,     // [numClusters * 5] (H,S,V,x,y)
+    const int numClusters,
+    const float m,                      // compactness factor
+    __global int* labels,
+    __global float* distances
+) {
+    int x = get_global_id(0);
+    int y = get_global_id(1);
+
+    if (x >= width || y >= height) return;
+
+    int idx = y * width + x;
+
+    // Read HSV values from input image (assuming stored as float4 with H,S,V in RGB channels)
+    const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;
+    float4 hsv = read_imagef(hsvImage, sampler, (int2)(x, y));
+    float H = hsv.x;
+    float S = hsv.y;
+    float V = hsv.z;
+
+    float minDist = FLT_MAX;
+    int bestCluster = -1;
+
+    for (int c = 0; c < numClusters; ++c) {
+        float Hc = clusters[c * 5 + 0];
+        float Sc = clusters[c * 5 + 1];
+        float Vc = clusters[c * 5 + 2];
+        float xc = clusters[c * 5 + 3];
+        float yc = clusters[c * 5 + 4];
+
+        // Color distance in HSV
+        float dh = H - Hc;
+        float ds = S - Sc;
+        float dv = V - Vc;
+        float dc = sqrt(dh * dh + ds * ds + dv * dv);
+
+        // Spatial distance
+        float dx = (float)x - xc;
+        float dy = (float)y - yc;
+        float ds_xy = sqrt(dx * dx + dy * dy);
+
+        // Combined distance
+        float D = dc + (m / 10.0f) * ds_xy;
+
+        if (D < minDist) {
+            minDist = D;
+            bestCluster = c;
+        }
+    }
+
+    labels[idx] = bestCluster;
+    distances[idx] = minDist;
+}
+
