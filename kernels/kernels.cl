@@ -156,7 +156,7 @@ __kernel void assignPixelsToClusters(
         float dh = H - Hc;
         float ds = S - Sc;
         float dv = V - Vc;
-        float dc = sqrt(dh * dh + ds * ds + dv * dv);
+        float dc = 100 * sqrt(dh * dh + ds * ds + dv * dv);
 
         // Spatial distance
         float dx = (float)x - xc;
@@ -176,3 +176,37 @@ __kernel void assignPixelsToClusters(
     distances[idx] = minDist;
 }
 
+
+__kernel void updateClusters(
+    read_only image2d_t hsvImage,            // Combined HSV image
+    __global const int* labels,              // Assigned labels per pixel
+    const int width,
+    const int height,
+    const int numClusters,
+    __global float* clusterSums,             // [numClusters * 5] (H, S, V, x, y)
+    __global int* clusterCounts              // [numClusters]
+) {
+    int x = get_global_id(0);
+    int y = get_global_id(1);
+    if (x >= width || y >= height) return;
+
+    int idx = y * width + x;
+    int label = labels[idx];
+    if (label < 0 || label >= numClusters) return;
+
+    int2 coord = (int2)(x, y);
+    float4 hsv = read_imagef(hsvImage, CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST, coord);
+    float H = hsv.x;
+    float S = hsv.y;
+    float V = hsv.z;
+
+    int base = label * 5;
+
+    clusterSums[base + 0] += H;
+    clusterSums[base + 1] += S;
+    clusterSums[base + 2] += V;
+    clusterSums[base + 3] += (float)x;
+    clusterSums[base + 4] += (float)y;
+
+    atomic_inc(&clusterCounts[label]);
+}
