@@ -38,7 +38,7 @@ std::string loadKernelSource(const std::string& filePath) {
     return oss.str();
 }
 
-const std::string REPOROOT = std::filesystem::current_path().parent_path().string();
+const std::string REPOROOT = std::filesystem::current_path().parent_path().string()+"/PR25Laaw05_SUPERPIXEL";
 const std::string KERNELS = REPOROOT + "/kernels/";
 const std::string KERNEL_FILE = KERNELS + "kernels.cl";
 const std::string IMAGES = REPOROOT + "/images/";
@@ -53,7 +53,7 @@ const std::map<std::string, std::string> IMAGES_MAP = {
 
 int main(int argc, char* args[]) {
 
-    std::cout << cv::getBuildInformation() << std::endl;
+    //std::cout << cv::getBuildInformation() << std::endl;
 
     TRACE("PR25LAAW05_SUPERPIXEL application started");
 
@@ -112,7 +112,7 @@ int main(int argc, char* args[]) {
     
     cl_device_id devices[64];
     unsigned int deviceCount;
-    cl_int deviceResult = clGetDeviceIDs(platforms[platformIndex], CL_DEVICE_TYPE_GPU, 64, devices, &deviceCount);
+    cl_int deviceResult = clGetDeviceIDs(platforms[platformIndex], CL_DEVICE_TYPE_ALL, 64, devices, &deviceCount);
     if (deviceResult != CL_SUCCESS || deviceCount == 0) {
         std::cerr << "No GPU devices found on selected platform.\n";
         return -1;
