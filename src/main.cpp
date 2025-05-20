@@ -21,6 +21,8 @@ const std::string KERNELS = REPOROOT + "/kernels/";
 const std::string KERNEL_FILE = KERNELS + "kernels.cl";
 const std::string IMAGES = REPOROOT + "/images/";
 const std::map<std::string, std::string> IMAGES_MAP = {
+    {"0", IMAGES + "sample.png"},
+    {"05", IMAGES + "(BARCODE)0005.tif"},
     {"3",  IMAGES + "(BARCODE)0003.tif"},
     {"7",  IMAGES + "(BARCODE)0007.tif"},
     {"15", IMAGES + "(BARCODE)0015.tif"},
@@ -214,6 +216,54 @@ void visualizeLabels(const std::string& path, const std::vector<int>& labels,
     cv::imwrite(path, image);
 }
 
+void visualizeLabelBoundaries(const std::string& inputImagePath,
+                              const std::string& outputImagePath,
+                              const std::vector<int>& labels,
+                              int width, int height, int numClusters) {
+    // Load the original image
+    cv::Mat image = cv::imread(inputImagePath);
+    if (image.empty()) {
+        std::cerr << "Error: Could not load input image: " << inputImagePath << std::endl;
+        return;
+    }
+
+    // Ensure image dimensions match label data
+    if (image.cols != width || image.rows != height) {
+        std::cerr << "Error: Image size does not match given width and height." << std::endl;
+        return;
+    }
+
+    auto isBoundary = [&](int x, int y) {
+        int currentLabel = labels[y * width + x];
+        // Check 4-neighborhood
+        if (x > 0 && labels[y * width + (x - 1)] != currentLabel) return true;
+        if (x < width - 1 && labels[y * width + (x + 1)] != currentLabel) return true;
+        if (y > 0 && labels[(y - 1) * width + x] != currentLabel) return true;
+        if (y < height - 1 && labels[(y + 1) * width + x] != currentLabel) return true;
+        return false;
+    };
+
+    // Draw boundary pixels on the image
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (isBoundary(x, y)) {
+                if((x+y)%2){
+                    image.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255); // red boundary
+                }
+                else
+                {
+                    image.at<cv::Vec3b>(y, x) = cv::Vec3b(100, 100, 255); // boundary
+                }
+                
+                    
+            }
+        }
+    }
+
+    // Save the output image
+    cv::imwrite(outputImagePath, image);
+}
+
 
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
@@ -325,7 +375,7 @@ int main(int argc, char* args[]) {
         clEnqueueReadBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
         clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
         std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
-        visualizeLabels(outputPath, labels, width, height, numClusters);
+        visualizeLabelBoundaries(IMAGES_MAP.at(args[1]), outputPath, labels, width, height, numClusters);
 
         for (int i = 0; i < numClusters; ++i) {
             int count = clusterCounts[i];
