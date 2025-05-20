@@ -92,20 +92,42 @@ void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
     cv::imwrite(path, output);
 }
 
-void createInitialClusters(int width, int height, int numClusters, std::vector<float>& clusterData) {
-    int step = static_cast<int>(sqrt((width * height) / numClusters));
+
+void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData) {
+    // Estimate grid dimensions based on aspect ratio and target cluster count
+    int gridCols = static_cast<int>(std::sqrt((float)numClusters * width / height));
+    int gridRows = static_cast<int>(std::ceil((float)numClusters / gridCols));
+
+    // Override number of clusters to fit full grid
+    numClusters = gridCols * gridRows;
+    clusterData.resize(numClusters * 5);  // H, S, V, x, y
+
+    float stepX = static_cast<float>(width) / gridCols;
+    float stepY = static_cast<float>(height) / gridRows;
+
     int c = 0;
-    for (int y = step / 2; y < height && c < numClusters; y += step) {
-        for (int x = step / 2; x < width && c < numClusters; x += step) {
-            clusterData[c * 5 + 0] = 0.5f; // H
-            clusterData[c * 5 + 1] = 0.5f; // S
-            clusterData[c * 5 + 2] = 0.5f; // V
-            clusterData[c * 5 + 3] = (float)x;
-            clusterData[c * 5 + 4] = (float)y;
+    for (int row = 0; row < gridRows; ++row) {
+        for (int col = 0; col < gridCols; ++col) {
+            float cx = (col + 0.5f) * stepX;
+            float cy = (row + 0.5f) * stepY;
+
+            // Clamp to image bounds
+            if (cx >= width) cx = width - 1;
+            if (cy >= height) cy = height - 1;
+
+            clusterData[c * 5 + 0] = 0.5f;      // H
+            clusterData[c * 5 + 1] = 0.5f;      // S
+            clusterData[c * 5 + 2] = 0.5f;      // V
+            clusterData[c * 5 + 3] = cx;        // X
+            clusterData[c * 5 + 4] = cy;        // Y
+
             ++c;
         }
     }
+
+    std::cout << "Adjusted numClusters = " << numClusters << " (" << gridCols << " × " << gridRows << " grid)" << std::endl;
 }
+
 
 const int NUM_ITERATIONS = 10;
 
@@ -144,21 +166,6 @@ cv::Mat loadAndConvertImage(const std::string& path, cl_context context, cl_mem&
     assertCLSuccess(result, "Failed to create OpenCL image");
 
     return imgRGBA;
-}
-
-void initializeClusters(std::vector<float>& clusterData, int numClusters, int width, int height) {
-    int step = static_cast<int>(sqrt((width * height) / numClusters));
-    int c = 0;
-    for (int y = step / 2; y < height && c < numClusters; y += step) {
-        for (int x = step / 2; x < width && c < numClusters; x += step) {
-            clusterData[c * 5 + 0] = 0.5f; // H
-            clusterData[c * 5 + 1] = 0.5f; // S
-            clusterData[c * 5 + 2] = 0.5f; // V
-            clusterData[c * 5 + 3] = static_cast<float>(x);
-            clusterData[c * 5 + 4] = static_cast<float>(y);
-            ++c;
-        }
-    }
 }
 
 void runAssignPixelsToClusters(cl_command_queue queue, cl_kernel kernel, cl_mem hsv_image, int width, int height,
@@ -322,7 +329,7 @@ int main(int argc, char* args[]) {
     writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
 
     // Superpixel clustering
-    const int numClusters = 1000;
+    int numClusters = 500;
     const float m = 10.0f;
     std::vector<float> clusterData(numClusters * 5);
     createInitialClusters(width, height, numClusters, clusterData);
@@ -365,10 +372,10 @@ int main(int argc, char* args[]) {
         clEnqueueWriteBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
 
         // Assign pixels
-        runAssignPixelsToClusters(queue, cluster_kernel, hsv_image, width, height, clusterBuffer, numClusters, m, labelBuffer, distanceBuffer);
+        runAssignPixelsToClusters(queue, cluster_kernel, image_in, width, height, clusterBuffer, numClusters, m, labelBuffer, distanceBuffer);
 
         // Update clusters
-        runUpdateClusters(queue, update_kernel, hsv_image, labelBuffer, width, height, numClusters, clusterSumBuffer, clusterCountBuffer);
+        runUpdateClusters(queue, update_kernel, image_in, labelBuffer, width, height, numClusters, clusterSumBuffer, clusterCountBuffer);
 
         // Read back and update cluster centers
         clEnqueueReadBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(float) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);

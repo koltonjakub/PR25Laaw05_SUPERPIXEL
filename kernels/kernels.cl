@@ -156,7 +156,7 @@ __kernel void assignPixelsToClusters(
         float dh = H - Hc;
         float ds = S - Sc;
         float dv = V - Vc;
-        float dc = 1000 * (dh * dh + ds * ds + dv * dv);
+        float dc = 10000 * (dh * dh + ds * ds + dv * dv);
 
         // Spatial distance
         float dx = (float)x - xc;
