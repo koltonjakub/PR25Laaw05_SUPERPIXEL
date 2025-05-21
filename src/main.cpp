@@ -16,8 +16,8 @@
 #define TRACE(fmt, ...)                                                            \
     { printf("[TRACE_FMT] %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); };
 
-// const std::string REPOROOT = std::filesystem::current_path().parent_path().string() + "/PR25Laaw05_SUPERPIXEL";
-const std::string REPOROOT = std::filesystem::current_path().parent_path().string();
+const std::string REPOROOT = std::filesystem::current_path().parent_path().string() + "/PR25Laaw05_SUPERPIXEL";
+// const std::string REPOROOT = std::filesystem::current_path().parent_path().string();
 const std::string KERNELS = REPOROOT + "/kernels/";
 const std::string KERNEL_FILE = KERNELS + "kernels.cl";
 const std::string IMAGES = REPOROOT + "/images/";
@@ -101,7 +101,7 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
 
     // Override number of clusters to fit full grid
     numClusters = gridCols * gridRows;
-    clusterData.resize(numClusters * 5);  // H, S, V, x, y
+    clusterData.reserve(numClusters * 5);  // H, S, V, x, y
 
     float stepX = static_cast<float>(width) / gridCols;
     float stepY = static_cast<float>(height) / gridRows;
@@ -116,11 +116,11 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
             if (cx >= width) cx = width - 1;
             if (cy >= height) cy = height - 1;
 
-            clusterData[c * 5 + 0] = 0.5f;      // H
-            clusterData[c * 5 + 1] = 0.5f;      // S
-            clusterData[c * 5 + 2] = 0.5f;      // V
-            clusterData[c * 5 + 3] = cx;        // X
-            clusterData[c * 5 + 4] = cy;        // Y
+            clusterData.push_back(0.5f);      // H
+            clusterData.push_back(0.5f);      // S
+            clusterData.push_back(0.5f);      // V
+            clusterData.push_back(cx);        // X
+            clusterData.push_back(cy);        // Y
 
             ++c;
         }
@@ -330,9 +330,9 @@ int main(int argc, char* args[]) {
     writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
 
     // Superpixel clustering
-    int numClusters = 500;
+    int numClusters = 5000;
     const float m = 10.0f;
-    std::vector<float> clusterData(numClusters * 5);
+    std::vector<float> clusterData(0);
     createInitialClusters(width, height, numClusters, clusterData);
 
     cl_mem clusterBuffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,

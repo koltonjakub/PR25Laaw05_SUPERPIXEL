@@ -42,3 +42,5 @@ Dane/**
 # Intermediate files
 /build
 /out
+
+/.venv
