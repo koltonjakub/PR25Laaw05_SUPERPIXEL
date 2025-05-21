@@ -94,7 +94,7 @@ void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
 }
 
 
-void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData) {
+void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData, const std::string& MaskImagePath) {
     // Estimate grid dimensions based on aspect ratio and target cluster count
     int gridCols = static_cast<int>(std::sqrt((float)numClusters * width / height));
     int gridRows = static_cast<int>(std::ceil((float)numClusters / gridCols));
@@ -106,6 +106,13 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
     float stepX = static_cast<float>(width) / gridCols;
     float stepY = static_cast<float>(height) / gridRows;
 
+    cv::Mat mask_img = cv::imread(MaskImagePath, cv::IMREAD_GRAYSCALE);
+    if (mask_img.empty()) {
+        std::cerr << "Error: Failed to load mask image: " << MaskImagePath << std::endl;
+        return;
+    }
+    const int blank_divider = 8;
+
     int c = 0;
     for (int row = 0; row < gridRows; ++row) {
         for (int col = 0; col < gridCols; ++col) {
@@ -116,12 +123,25 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
             if (cx >= width) cx = width - 1;
             if (cy >= height) cy = height - 1;
 
-            clusterData.push_back(0.5f);      // H
-            clusterData.push_back(0.5f);      // S
-            clusterData.push_back(0.5f);      // V
-            clusterData.push_back(cx);        // X
-            clusterData.push_back(cy);        // Y
-
+            //fix this code
+            if (mask_img.at<uchar>(cy, cx) > 0)
+            {
+                clusterData.push_back(0.5f);      // H
+                clusterData.push_back(0.5f);      // S
+                clusterData.push_back(0.5f);      // V
+                clusterData.push_back(cx);        // X
+                clusterData.push_back(cy);        // Y
+            }
+            else if (!(static_cast<int>(col)%blank_divider || static_cast<int>(row)%blank_divider))
+            {
+                //Less clusters for no leafes
+                clusterData.push_back(0.5f);      // H
+                clusterData.push_back(0.5f);      // S
+                clusterData.push_back(0.5f);      // V
+                clusterData.push_back(cx);        // X
+                clusterData.push_back(cy);        // Y
+            }//else do nothing, no cluster
+            
             ++c;
         }
     }
@@ -333,7 +353,7 @@ int main(int argc, char* args[]) {
     int numClusters = 5000;
     const float m = 10.0f;
     std::vector<float> clusterData(0);
-    createInitialClusters(width, height, numClusters, clusterData);
+    createInitialClusters(width, height, numClusters, clusterData, IMAGES + "mask_image.jpg");
 
     cl_mem clusterBuffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                                           sizeof(float) * clusterData.size(), clusterData.data(), &err);
