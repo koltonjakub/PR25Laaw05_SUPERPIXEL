@@ -13,6 +13,7 @@ for i in range(1, num_frames + 1):
     
     # Load image
     image = cv2.imread(file_path)
+    image = cv2.resize(image, (640, 480))  # Resize for better visualization
     if image is None:
         print(f"Warning: Could not load image {file_path}")
         continue

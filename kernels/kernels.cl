@@ -1,72 +1,3 @@
-//------------------------------------------------------------------------------
-//
-// kernel:  vadd  
-//
-// Purpose: Compute the elementwise sum c = a+b
-// 
-// input: a and b float vectors of length count
-//
-// output: c float vector of length count holding the sum a + b
-//
-
-// __kernel void vector_sum(                             
-//    __global float* a,                      
-//    __global float* b,                      
-//    __global float* c,
-//    const int count)               
-// {                                          
-//    int i = get_global_id(0);               
-//    if(i < count)  {
-//        c[i] = a[i] + b[i];                 
-//    }
-// }
-
-// __kernel void make_black_image(read_only image2d_t imgSrc,
-//                                write_only image2d_t imgDst)
-// {
-//    int2 pos = (int2)(get_global_id(0), get_global_id(1));
-//    float4 pixel = read_imagef(imgSrc, pos);
-   
-//    if(pos.x == 0 && pos.y == 0)
-//    {
-//       printf("Reading %f %f %f %f\n", pixel.x, pixel.y, pixel.z, pixel.w);
-//    }
-
-//    pixel.x = 1.0f;
-//    pixel.y = 1.0f;
-//    pixel.z = 1.0f;
-//    pixel.w = 1.0f;
-//    if (pos.x == 0 && pos.y == 0)
-//    {
-//       printf("Writing %f %f %f %f\n", pixel.x, pixel.y, pixel.z, pixel.w);
-//    }
-//    write_imagef(imgDst, pos, pixel);
-// }
-
-
-// __kernel void increment_pixel(read_only image2d_t imgSrc,
-//                                write_only image2d_t imgDst)
-// {
-//    int2 pos = (int2)(get_global_id(0), get_global_id(1));
-//    float4 pixel = read_imagef(imgSrc, pos);
-   
-//    if(pos.x == 0 && pos.y == 0)
-//    {
-//       printf("Reading %f %f %f %f\n", pixel.x, pixel.y, pixel.z, pixel.w);
-//    }
-
-//    pixel.x = pixel.x - 0.01f;
-//    pixel.y = pixel.y - 0.01f;
-//    pixel.z = pixel.z - 0.01f;
-//    pixel.w = pixel.w - 0.01f;
-   
-//    if(pos.x == 0 && pos.y == 0)
-//    {
-//       printf("Writing %f %f %f %f\n", pixel.x, pixel.y, pixel.z, pixel.w);
-//    }
-//    write_imagef(imgDst, pos, pixel);
-// }
-
 float4 rgb_to_hsv(float3 c) {
     float r = c.x;
     float g = c.y;
@@ -106,10 +37,10 @@ __kernel void hsv_binary_filter(read_only image2d_t inputImage,
     float4 hsv = rgb_to_hsv(rgba.xyz);
     write_imagef(HSVImage, coord, hsv);
 
-    const float h_min = 0.22f;
-    const float h_max = 0.33f;
-    const float s_min = 0.1f;
-    const float v_min = 0.3f;
+    const float h_min = 0.0f;
+    const float h_max = 1.0f;
+    const float s_min = 0.11f;
+    const float v_min = 0.11f;
 
     int is_green = hsv.x >= h_min && hsv.x <= h_max &&
                    hsv.y >= s_min && hsv.z >= v_min;
@@ -117,6 +48,8 @@ __kernel void hsv_binary_filter(read_only image2d_t inputImage,
     float4 output = (float4)(is_green, is_green, is_green, 1.0f);
     write_imagef(MaskImage, coord, output);
 }
+
+const float PRECISION = 100000.0f; // Precision for HSV values
 
 __kernel void assignPixelsToClusters(
     read_only image2d_t hsvImage,       // combined HSV input image
@@ -146,11 +79,11 @@ __kernel void assignPixelsToClusters(
     int bestCluster = -1;
 
     for (int c = 0; c < numClusters; ++c) {
-        float Hc = clusters[c * 5 + 0];
-        float Sc = clusters[c * 5 + 1];
-        float Vc = clusters[c * 5 + 2];
-        float xc = clusters[c * 5 + 3];
-        float yc = clusters[c * 5 + 4];
+        float Hc = clusters[c * 5 + 0] / PRECISION; // Scale back H
+        float Sc = clusters[c * 5 + 1] / PRECISION; // Scale back S
+        float Vc = clusters[c * 5 + 2] / PRECISION; // Scale back V
+        float xc = clusters[c * 5 + 3];           // x remains as is
+        float yc = clusters[c * 5 + 4];           // y remains as is
 
         // Color distance in HSV
         float dh = H - Hc;
@@ -183,7 +116,7 @@ __kernel void updateClusters(
     const int width,
     const int height,
     const int numClusters,
-    __global float* clusterSums,             // [numClusters * 5] (H, S, V, x, y)
+    __global int* clusterSums,               // [numClusters * 5] (H, S, V, x, y) as integers
     __global int* clusterCounts              // [numClusters]
 ) {
     int x = get_global_id(0);
@@ -196,17 +129,17 @@ __kernel void updateClusters(
 
     int2 coord = (int2)(x, y);
     float4 hsv = read_imagef(hsvImage, CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST, coord);
-    float H = hsv.x;
-    float S = hsv.y;
-    float V = hsv.z;
+    int H = (int)(hsv.x * PRECISION); // Scale H by 1000
+    int S = (int)(hsv.y * PRECISION); // Scale S by 1000
+    int V = (int)(hsv.z * PRECISION); // Scale V by 1000
 
     int base = label * 5;
 
-    clusterSums[base + 0] += H;
-    clusterSums[base + 1] += S;
-    clusterSums[base + 2] += V;
-    clusterSums[base + 3] += (float)x;
-    clusterSums[base + 4] += (float)y;
+    atomic_add(&clusterSums[base + 0], H);
+    atomic_add(&clusterSums[base + 1], S);
+    atomic_add(&clusterSums[base + 2], V);
+    atomic_add(&clusterSums[base + 3], x);
+    atomic_add(&clusterSums[base + 4], y);
 
     atomic_inc(&clusterCounts[label]);
 }

@@ -296,6 +296,8 @@ void visualizeLabelBoundaries(const std::string& inputImagePath,
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
 
+    const int usedNumIterations = (argc > 3) ? std::stoi(args[3]) : -NUM_ITERATIONS;
+
     // OpenCL Setup
     cl_platform_id platforms[64];
     unsigned int platformCount;
@@ -350,7 +352,7 @@ int main(int argc, char* args[]) {
     writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
 
     // Superpixel clustering
-    int numClusters = 5000;
+    int numClusters = 10000;
     const float m = 10.0f;
     std::vector<float> clusterData(0);
     createInitialClusters(width, height, numClusters, clusterData, IMAGES + "mask_image.jpg");
@@ -376,20 +378,21 @@ int main(int argc, char* args[]) {
     for (int i = 0; i < labels.size(); ++i) labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255);
     cv::imwrite(IMAGES + "label_image.jpg", labelImg);
 
-    std::vector<float> clusterSums(numClusters * 5, 0.0f);
-    std::vector<int> clusterCounts(numClusters, 0);
+    std::vector<int> clusterSums(numClusters * 5, 0); // Use integers for clusterSums
     cl_mem clusterSumBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-                                             sizeof(float) * clusterSums.size(), clusterSums.data(), &err);
+                                             sizeof(int) * clusterSums.size(), clusterSums.data(), &err);
+    assertCLSuccess(err, "Failed to create clusterSums buffer");
+    std::vector<int> clusterCounts(numClusters, 0);
     cl_mem clusterCountBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                                                sizeof(int) * clusterCounts.size(), clusterCounts.data(), &err);
 
-    for (int iter = 0; iter < NUM_ITERATIONS; ++iter) {
+    for (int iter = 0; iter < usedNumIterations; ++iter) {
         TRACE("Clustering iteration %d", iter + 1);
 
         // Reset accumulation buffers
         std::fill(clusterSums.begin(), clusterSums.end(), 0.0f);
         std::fill(clusterCounts.begin(), clusterCounts.end(), 0);
-        clEnqueueWriteBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(float) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
+        clEnqueueWriteBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
         clEnqueueWriteBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
 
         // Assign pixels
@@ -399,7 +402,7 @@ int main(int argc, char* args[]) {
         runUpdateClusters(queue, update_kernel, image_in, labelBuffer, width, height, numClusters, clusterSumBuffer, clusterCountBuffer);
 
         // Read back and update cluster centers
-        clEnqueueReadBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(float) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
+        clEnqueueReadBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
         clEnqueueReadBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
         clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
         std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
