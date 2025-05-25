@@ -206,7 +206,8 @@ void runAssignPixelsToClusters(cl_command_queue queue, cl_kernel kernel, cl_mem 
     clSetKernelArg(kernel, 7, sizeof(cl_mem), &distanceBuffer);
 
     size_t globalWorkSize[2] = {static_cast<size_t>(width), static_cast<size_t>(height)};
-    clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+    cl_int err = clEnqueueNDRangeKernel(queue, kernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+    assertCLSuccess(err, "Kernel enqueue failed");
     clFinish(queue);
 }
 
@@ -221,7 +222,8 @@ void runUpdateClusters(cl_command_queue queue, cl_kernel updateKernel, cl_mem hs
     clSetKernelArg(updateKernel, 6, sizeof(cl_mem), &clusterCountBuffer);
 
     size_t globalWorkSize[2] = {static_cast<size_t>(width), static_cast<size_t>(height)};
-    clEnqueueNDRangeKernel(queue, updateKernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+    cl_int err = clEnqueueNDRangeKernel(queue, updateKernel, 2, nullptr, globalWorkSize, nullptr, 0, nullptr, nullptr);
+    assertCLSuccess(err, "Kernel enqueue failed");
     clFinish(queue);
 }
 
@@ -249,11 +251,16 @@ void visualizeLabels(const std::string& path, const std::vector<int>& labels,
     cv::imwrite(path, image);
 }
 
-void visualizeLabelBoundaries(cv::Mat image,
+void visualizeLabelBoundaries(const std::string& inputImagePath,
                               const std::string& outputImagePath,
                               const std::vector<int>& labels,
                               int width, int height, int numClusters) {
-
+    // Load the original image
+    cv::Mat image = cv::imread(inputImagePath);
+    if (image.empty()) {
+        std::cerr << "Error: Could not load input image: " << inputImagePath << std::endl;
+        return;
+    }
     // Ensure image dimensions match label data
     if (image.cols != width || image.rows != height) {
         std::cerr << "Error: Image size does not match given width and height." << std::endl;
@@ -379,12 +386,15 @@ int main(int argc, char* args[]) {
         clSetKernelArg(hsv_kernel, 2, sizeof(cl_mem), &hsv_image);
 
         size_t globalSize[2] = {static_cast<size_t>(width), static_cast<size_t>(height)};
-        clEnqueueNDRangeKernel(queue, hsv_kernel, 2, nullptr, globalSize, nullptr, 0, nullptr, nullptr);
+        err = clEnqueueNDRangeKernel(queue, hsv_kernel, 2, nullptr, globalSize, nullptr, 0, nullptr, nullptr);
+        assertCLSuccess(err, "Kernel enqueue failed");
         clFinish(queue);
 
+        TRACE("Writing HSV and mask");
         writeImage(IMAGES + "mask_image.jpg", queue, mask_image, width, height);
         writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
 
+        TRACE("Initializing Superpixels Structures");
         int numClusters = expected_numClusters;
         std::vector<float> clusterData(0);
         createInitialClusters(width, height, numClusters, clusterData, IMAGES + "mask_image.jpg");
@@ -394,10 +404,13 @@ int main(int argc, char* args[]) {
         cl_mem labelBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(int) * width * height, nullptr, &err);
         cl_mem distanceBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(float) * width * height, nullptr, &err);
 
+        TRACE("Creating Superpixel kernels");
         cl_kernel cluster_kernel = clCreateKernel(program, "assignPixelsToClusters", &err);
         cl_kernel update_kernel = clCreateKernel(program, "updateClusters", &err);
 
-        std::vector<int> labels(width * height);
+        TRACE("Width: %d, Height: %d", width, height);
+
+        std::vector<int> labels(width * height, 0);
         clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
 
         std::vector<float> distances(width * height, FLT_MAX);
@@ -406,14 +419,23 @@ int main(int argc, char* args[]) {
         std::vector<int> initLabels(width * height, -1);
         clEnqueueWriteBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * initLabels.size(), initLabels.data(), 0, nullptr, nullptr);
 
-        cv::Mat labelImg(height, width, CV_8UC1);
-        for (int i = 0; i < labels.size(); ++i) labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255);
+        cv::Mat labelImg = cv::Mat::zeros(height, width, CV_8UC1);
+        TRACE("Labels Size: %ld", labels.size());
+        // for (int i = 0; i < labels.size(); ++i){
+        //     labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255);
+        // }
+        for (int i = 0; i < height; ++i){
+            for (int j = 0; j < width; ++j){
+                labelImg.at<uchar>(i, j)  = static_cast<uchar>((labels[i*width+j] * 17) % 255);
+            }
+        }
         cv::imwrite(IMAGES + "label_image.jpg", labelImg);
 
         std::vector<int> clusterSums(numClusters * 5, 0); // Use integers for clusterSums
         cl_mem clusterSumBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                                                 sizeof(int) * clusterSums.size(), clusterSums.data(), &err);
         assertCLSuccess(err, "Failed to create clusterSums buffer");
+
         std::vector<int> clusterCounts(numClusters, 0);
         cl_mem clusterCountBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                                                 sizeof(int) * clusterCounts.size(), clusterCounts.data(), &err);
@@ -442,7 +464,7 @@ int main(int argc, char* args[]) {
             clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
             std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
             TRACE("Visualizing boundaries")
-            visualizeLabelBoundaries(sourceRGBA, outputPath, labels, width, height, numClusters);
+            visualizeLabelBoundaries(currentImagePath, outputPath, labels, width, height, numClusters);
 
             for (int i = 0; i < numClusters; ++i) {
                 int count = clusterCounts[i];
