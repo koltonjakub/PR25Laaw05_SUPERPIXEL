@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <map>
 #include <queue>
+#include <chrono>
+#include <sstream>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -292,6 +294,10 @@ void visualizeLabelBoundaries(cv::Mat image,
 
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
+    auto program_start = std::chrono::high_resolution_clock::now();
+
+    std::ostringstream oss;
+    oss << "Logging Timing Raport\n";
 
     int operation_type = std::stoi(args[1]);
     int platformIndex = std::stoi(args[2]);
@@ -342,9 +348,14 @@ int main(int argc, char* args[]) {
     TRACE("Entering Dequeuing loop");
     while (!images_path_queue.empty())
     {
-        TRACE("Dequeuing %s", images_path_queue.front().c_str());
-        cv::Mat sourceRGBA = loadAndConvertImage(images_path_queue.front());
+        auto currentImagePath = images_path_queue.front();
         images_path_queue.pop();
+
+        TRACE("Dequeuing %s", currentImagePath.c_str());
+        oss << "\t Processing " << currentImagePath << '\n';
+
+        auto image_start = std::chrono::high_resolution_clock::now();
+        cv::Mat sourceRGBA = loadAndConvertImage(currentImagePath);
         int width = sourceRGBA.cols;
         int height = sourceRGBA.rows;
 
@@ -408,6 +419,9 @@ int main(int argc, char* args[]) {
 
         for (int iter = 0; iter < clusteringCycles; ++iter) {
             TRACE("Clustering iteration %d", iter + 1);
+            oss << "\t\t Clusterig iteration " << iter + 1 << "\n";
+
+            auto cycle_start = std::chrono::high_resolution_clock::now();
 
             // Reset accumulation buffers
             std::fill(clusterSums.begin(), clusterSums.end(), 0.0f);
@@ -442,6 +456,11 @@ int main(int argc, char* args[]) {
 
             clEnqueueWriteBuffer(queue, clusterBuffer, CL_TRUE, 0, sizeof(float) * clusterData.size(), clusterData.data(), 0, nullptr, nullptr);
             clFinish(queue);
+            
+            auto cycle_end = std::chrono::high_resolution_clock::now();
+            auto cycle_duration = std::chrono::duration_cast<std::chrono::milliseconds>(cycle_end - cycle_start).count();
+            TRACE("Clustering iteration %d took %ld ms", iter + 1, cycle_duration);
+            oss << "\t\t Duration " << cycle_duration << " ms\n";
         }
         // Cleanup
         TRACE("Releasing Mem Objects");
@@ -457,12 +476,24 @@ int main(int argc, char* args[]) {
         clReleaseKernel(hsv_kernel);
         clReleaseKernel(cluster_kernel);
         clReleaseKernel(update_kernel);
+
+        auto image_end = std::chrono::high_resolution_clock::now();
+        auto image_duration = std::chrono::duration_cast<std::chrono::milliseconds>(image_end - image_start).count();
+        TRACE("Finished processing image %s in %ld ms", currentImagePath.c_str(), image_duration);
+        oss << "\t Duration: " << image_duration << " ms\n";
     }
 
     TRACE("Releasing Other");
     clReleaseProgram(program);
     clReleaseCommandQueue(queue);
     clReleaseContext(context);
+
+    auto program_end = std::chrono::high_resolution_clock::now();
+    auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(program_end - program_start).count();
+    TRACE("Total program execution time: %ld ms", total_duration);
+    oss<<"Duration:" << total_duration << "ms\n";
+    std::cout << oss.str();
+
     TRACE("PR25LAAW05_SUPERPIXEL application finished");
     return 0;
 }
