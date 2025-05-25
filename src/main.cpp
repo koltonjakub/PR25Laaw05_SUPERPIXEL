@@ -7,6 +7,7 @@
 #include <vector>
 #include <filesystem>
 #include <map>
+#include <queue>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -101,6 +102,7 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
 
     // Override number of clusters to fit full grid
     numClusters = gridCols * gridRows;
+    clusterData.clear();
     clusterData.reserve(numClusters * 5);  // H, S, V, x, y
 
     float stepX = static_cast<float>(width) / gridCols;
@@ -146,11 +148,12 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
         }
     }
 
-    std::cout << "Adjusted numClusters = " << numClusters << " (" << gridCols << " × " << gridRows << " grid)" << std::endl;
+    TRACE("Adjusted numClusters = %d (%d × %d grid)", numClusters, gridCols, gridRows);
 }
 
 
 const int NUM_ITERATIONS = 10;
+const int NUM_SUPERPIXELS = 100;
 
 void assertCLSuccess(cl_int result, const char* message) {
     if (result != CL_SUCCESS) {
@@ -244,16 +247,10 @@ void visualizeLabels(const std::string& path, const std::vector<int>& labels,
     cv::imwrite(path, image);
 }
 
-void visualizeLabelBoundaries(const std::string& inputImagePath,
+void visualizeLabelBoundaries(cv::Mat image,
                               const std::string& outputImagePath,
                               const std::vector<int>& labels,
                               int width, int height, int numClusters) {
-    // Load the original image
-    cv::Mat image = cv::imread(inputImagePath);
-    if (image.empty()) {
-        std::cerr << "Error: Could not load input image: " << inputImagePath << std::endl;
-        return;
-    }
 
     // Ensure image dimensions match label data
     if (image.cols != width || image.rows != height) {
@@ -296,9 +293,27 @@ void visualizeLabelBoundaries(const std::string& inputImagePath,
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
 
-    const int usedNumIterations = (argc > 3) ? std::stoi(args[3]) : -NUM_ITERATIONS;
+    int operation_type = std::stoi(args[1]);
+    int platformIndex = std::stoi(args[2]);
+    const std::string image_path = IMAGES_MAP.at(args[3]);
+    const int clusteringCycles = (argc > 4) ? std::stoi(args[4]) : NUM_ITERATIONS;
+    int expected_numClusters = (argc > 5) ? std::stoi(args[5]) : NUM_SUPERPIXELS;
+    const float compactness_factor = static_cast<float>((argc > 6) ? std::stoi(args[6]) : 10.0f);
 
+    std::queue<std::string> images_path_queue;
+    if (operation_type == 0) // Just one image
+    {
+        images_path_queue.push(image_path);
+    }
+    else
+    {
+        for (const auto& pair : IMAGES_MAP) {
+            images_path_queue.push(pair.second);
+        }
+    }
+    
     // OpenCL Setup
+    TRACE("Initializing Platform");
     cl_platform_id platforms[64];
     unsigned int platformCount;
     clGetPlatformIDs(64, platforms, &platformCount);
@@ -309,7 +324,6 @@ int main(int argc, char* args[]) {
         TRACE("Platform %u: %s", i, name);
     }
 
-    int platformIndex = (argc > 2) ? std::stoi(args[2]) : 0;
     cl_device_id device = selectDevice(platformIndex, platforms, platformCount);
 
     cl_int err;
@@ -320,127 +334,135 @@ int main(int argc, char* args[]) {
     assert(err == CL_SUCCESS);
 
     // Load and build kernel
+    TRACE("Loading Kernel");
     std::string kernelSource = loadKernelSource(KERNEL_FILE);
     cl_program program = buildProgram(context, device, kernelSource);
 
     // Load input image
-    cv::Mat sourceRGBA = loadAndConvertImage(IMAGES_MAP.at(args[1]));
-    int width = sourceRGBA.cols;
-    int height = sourceRGBA.rows;
+    TRACE("Entering Dequeuing loop");
+    while (!images_path_queue.empty())
+    {
+        TRACE("Dequeuing %s", images_path_queue.front().c_str());
+        cv::Mat sourceRGBA = loadAndConvertImage(images_path_queue.front());
+        images_path_queue.pop();
+        int width = sourceRGBA.cols;
+        int height = sourceRGBA.rows;
 
-    cl_image_desc desc = {};
-    desc.image_type = CL_MEM_OBJECT_IMAGE2D;
-    desc.image_width = width;
-    desc.image_height = height;
+        cl_image_desc desc = {};
+        desc.image_type = CL_MEM_OBJECT_IMAGE2D;
+        desc.image_width = width;
+        desc.image_height = height;
 
-    cl_image_format format = {CL_RGBA, CL_UNORM_INT8};
-    cl_mem image_in = createImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, format, desc, sourceRGBA.data);
-    cl_mem mask_image = createImage(context, CL_MEM_READ_WRITE, format, desc);
-    cl_mem hsv_image = createImage(context, CL_MEM_READ_WRITE, format, desc);
+        cl_image_format format = {CL_RGBA, CL_UNORM_INT8};
+        TRACE("Creating input images images (sic!)");
+        cl_mem image_in = createImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, format, desc, sourceRGBA.data);
+        cl_mem mask_image = createImage(context, CL_MEM_READ_WRITE, format, desc);
+        cl_mem hsv_image = createImage(context, CL_MEM_READ_WRITE, format, desc);
 
-    // hsv_binary_filter kernel
-    cl_kernel hsv_kernel = clCreateKernel(program, "hsv_binary_filter", &err);
-    clSetKernelArg(hsv_kernel, 0, sizeof(cl_mem), &image_in);
-    clSetKernelArg(hsv_kernel, 1, sizeof(cl_mem), &mask_image);
-    clSetKernelArg(hsv_kernel, 2, sizeof(cl_mem), &hsv_image);
+        // hsv_binary_filter kernel
+        TRACE("Initializing HSV conversion kernel");
+        cl_kernel hsv_kernel = clCreateKernel(program, "hsv_binary_filter", &err);
+        clSetKernelArg(hsv_kernel, 0, sizeof(cl_mem), &image_in);
+        clSetKernelArg(hsv_kernel, 1, sizeof(cl_mem), &mask_image);
+        clSetKernelArg(hsv_kernel, 2, sizeof(cl_mem), &hsv_image);
 
-    size_t globalSize[2] = {static_cast<size_t>(width), static_cast<size_t>(height)};
-    clEnqueueNDRangeKernel(queue, hsv_kernel, 2, nullptr, globalSize, nullptr, 0, nullptr, nullptr);
-    clFinish(queue);
-
-    writeImage(IMAGES + "mask_image.jpg", queue, mask_image, width, height);
-    writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
-
-    // Superpixel clustering
-    int numClusters = 10000;
-    const float m = 10.0f;
-    std::vector<float> clusterData(0);
-    createInitialClusters(width, height, numClusters, clusterData, IMAGES + "mask_image.jpg");
-
-    cl_mem clusterBuffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                          sizeof(float) * clusterData.size(), clusterData.data(), &err);
-    cl_mem labelBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(int) * width * height, nullptr, &err);
-    cl_mem distanceBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(float) * width * height, nullptr, &err);
-
-    cl_kernel cluster_kernel = clCreateKernel(program, "assignPixelsToClusters", &err);
-    cl_kernel update_kernel = clCreateKernel(program, "updateClusters", &err);
-
-    std::vector<int> labels(width * height);
-    clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
-
-    std::vector<float> distances(width * height, FLT_MAX);
-    clEnqueueWriteBuffer(queue, distanceBuffer, CL_TRUE, 0, sizeof(float) * distances.size(), distances.data(), 0, nullptr, nullptr);
-
-    std::vector<int> initLabels(width * height, -1);
-    clEnqueueWriteBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * initLabels.size(), initLabels.data(), 0, nullptr, nullptr);
-
-    cv::Mat labelImg(height, width, CV_8UC1);
-    for (int i = 0; i < labels.size(); ++i) labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255);
-    cv::imwrite(IMAGES + "label_image.jpg", labelImg);
-
-    std::vector<int> clusterSums(numClusters * 5, 0); // Use integers for clusterSums
-    cl_mem clusterSumBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-                                             sizeof(int) * clusterSums.size(), clusterSums.data(), &err);
-    assertCLSuccess(err, "Failed to create clusterSums buffer");
-    std::vector<int> clusterCounts(numClusters, 0);
-    cl_mem clusterCountBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
-                                               sizeof(int) * clusterCounts.size(), clusterCounts.data(), &err);
-
-    for (int iter = 0; iter < usedNumIterations; ++iter) {
-        TRACE("Clustering iteration %d", iter + 1);
-
-        // Reset accumulation buffers
-        std::fill(clusterSums.begin(), clusterSums.end(), 0.0f);
-        std::fill(clusterCounts.begin(), clusterCounts.end(), 0);
-        clEnqueueWriteBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
-        clEnqueueWriteBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
-
-        // Assign pixels
-        runAssignPixelsToClusters(queue, cluster_kernel, image_in, width, height, clusterBuffer, numClusters, m, labelBuffer, distanceBuffer);
-
-        // Update clusters
-        runUpdateClusters(queue, update_kernel, image_in, labelBuffer, width, height, numClusters, clusterSumBuffer, clusterCountBuffer);
-
-        // Read back and update cluster centers
-        clEnqueueReadBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
-        clEnqueueReadBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
-        clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
-        std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
-        visualizeLabelBoundaries(IMAGES_MAP.at(args[1]), outputPath, labels, width, height, numClusters);
-
-        for (int i = 0; i < numClusters; ++i) {
-            int count = clusterCounts[i];
-            if (count > 0) {
-                clusterData[i * 5 + 0] = clusterSums[i * 5 + 0] / count;
-                clusterData[i * 5 + 1] = clusterSums[i * 5 + 1] / count;
-                clusterData[i * 5 + 2] = clusterSums[i * 5 + 2] / count;
-                clusterData[i * 5 + 3] = clusterSums[i * 5 + 3] / count;
-                clusterData[i * 5 + 4] = clusterSums[i * 5 + 4] / count;
-            }
-        }
-
-        clEnqueueWriteBuffer(queue, clusterBuffer, CL_TRUE, 0, sizeof(float) * clusterData.size(), clusterData.data(), 0, nullptr, nullptr);
+        size_t globalSize[2] = {static_cast<size_t>(width), static_cast<size_t>(height)};
+        clEnqueueNDRangeKernel(queue, hsv_kernel, 2, nullptr, globalSize, nullptr, 0, nullptr, nullptr);
         clFinish(queue);
+
+        writeImage(IMAGES + "mask_image.jpg", queue, mask_image, width, height);
+        writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
+
+        int numClusters = expected_numClusters;
+        std::vector<float> clusterData(0);
+        createInitialClusters(width, height, numClusters, clusterData, IMAGES + "mask_image.jpg");
+
+        cl_mem clusterBuffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                            sizeof(float) * clusterData.size(), clusterData.data(), &err);
+        cl_mem labelBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(int) * width * height, nullptr, &err);
+        cl_mem distanceBuffer = clCreateBuffer(context, CL_MEM_WRITE_ONLY, sizeof(float) * width * height, nullptr, &err);
+
+        cl_kernel cluster_kernel = clCreateKernel(program, "assignPixelsToClusters", &err);
+        cl_kernel update_kernel = clCreateKernel(program, "updateClusters", &err);
+
+        std::vector<int> labels(width * height);
+        clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
+
+        std::vector<float> distances(width * height, FLT_MAX);
+        clEnqueueWriteBuffer(queue, distanceBuffer, CL_TRUE, 0, sizeof(float) * distances.size(), distances.data(), 0, nullptr, nullptr);
+
+        std::vector<int> initLabels(width * height, -1);
+        clEnqueueWriteBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * initLabels.size(), initLabels.data(), 0, nullptr, nullptr);
+
+        cv::Mat labelImg(height, width, CV_8UC1);
+        for (int i = 0; i < labels.size(); ++i) labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255);
+        cv::imwrite(IMAGES + "label_image.jpg", labelImg);
+
+        std::vector<int> clusterSums(numClusters * 5, 0); // Use integers for clusterSums
+        cl_mem clusterSumBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                                sizeof(int) * clusterSums.size(), clusterSums.data(), &err);
+        assertCLSuccess(err, "Failed to create clusterSums buffer");
+        std::vector<int> clusterCounts(numClusters, 0);
+        cl_mem clusterCountBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
+                                                sizeof(int) * clusterCounts.size(), clusterCounts.data(), &err);
+
+        for (int iter = 0; iter < clusteringCycles; ++iter) {
+            TRACE("Clustering iteration %d", iter + 1);
+
+            // Reset accumulation buffers
+            std::fill(clusterSums.begin(), clusterSums.end(), 0.0f);
+            std::fill(clusterCounts.begin(), clusterCounts.end(), 0);
+            clEnqueueWriteBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
+            clEnqueueWriteBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
+
+            // Assign pixels
+            runAssignPixelsToClusters(queue, cluster_kernel, image_in, width, height, clusterBuffer, numClusters, compactness_factor, labelBuffer, distanceBuffer);
+
+            // Update clusters
+            runUpdateClusters(queue, update_kernel, image_in, labelBuffer, width, height, numClusters, clusterSumBuffer, clusterCountBuffer);
+
+            // Read back and update cluster centers
+            clEnqueueReadBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
+            clEnqueueReadBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
+            clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
+            std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
+            TRACE("Visualizing boundaries")
+            visualizeLabelBoundaries(sourceRGBA, outputPath, labels, width, height, numClusters);
+
+            for (int i = 0; i < numClusters; ++i) {
+                int count = clusterCounts[i];
+                if (count > 0) {
+                    clusterData[i * 5 + 0] = clusterSums[i * 5 + 0] / count;
+                    clusterData[i * 5 + 1] = clusterSums[i * 5 + 1] / count;
+                    clusterData[i * 5 + 2] = clusterSums[i * 5 + 2] / count;
+                    clusterData[i * 5 + 3] = clusterSums[i * 5 + 3] / count;
+                    clusterData[i * 5 + 4] = clusterSums[i * 5 + 4] / count;
+                }
+            }
+
+            clEnqueueWriteBuffer(queue, clusterBuffer, CL_TRUE, 0, sizeof(float) * clusterData.size(), clusterData.data(), 0, nullptr, nullptr);
+            clFinish(queue);
+        }
+        // Cleanup
+        TRACE("Releasing Mem Objects");
+        clReleaseMemObject(clusterSumBuffer);
+        clReleaseMemObject(clusterCountBuffer);
+        clReleaseMemObject(clusterBuffer);
+        clReleaseMemObject(labelBuffer);
+        clReleaseMemObject(distanceBuffer);
+        clReleaseMemObject(image_in);
+        clReleaseMemObject(mask_image);
+        clReleaseMemObject(hsv_image);
+        TRACE("Releasing Kernels");
+        clReleaseKernel(hsv_kernel);
+        clReleaseKernel(cluster_kernel);
+        clReleaseKernel(update_kernel);
     }
 
-    // Cleanup
-    TRACE("Releasing resources");
-    clReleaseMemObject(clusterSumBuffer);
-    clReleaseMemObject(clusterCountBuffer);
-    clReleaseMemObject(clusterBuffer);
-    clReleaseMemObject(labelBuffer);
-    clReleaseMemObject(distanceBuffer);
-    clReleaseMemObject(image_in);
-    clReleaseMemObject(mask_image);
-    clReleaseMemObject(hsv_image);
-
-    clReleaseKernel(hsv_kernel);
-    clReleaseKernel(cluster_kernel);
-    clReleaseKernel(update_kernel);
+    TRACE("Releasing Other");
     clReleaseProgram(program);
     clReleaseCommandQueue(queue);
     clReleaseContext(context);
-
     TRACE("PR25LAAW05_SUPERPIXEL application finished");
     return 0;
 }
