@@ -10,6 +10,7 @@
 #include <queue>
 #include <chrono>
 #include <sstream>
+#include <algorithm>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -24,16 +25,8 @@ const std::string REPOROOT = std::filesystem::current_path().parent_path().strin
 const std::string KERNELS = REPOROOT + "/kernels/";
 const std::string KERNEL_FILE = KERNELS + "kernels.cl";
 const std::string IMAGES = REPOROOT + "/images/";
-const std::map<std::string, std::string> IMAGES_MAP = {
-    {"0", IMAGES + "sample.png"},
-    {"05", IMAGES + "(BARCODE)0005.tif"},
-    {"3",  IMAGES + "(BARCODE)0003.tif"},
-    {"7",  IMAGES + "(BARCODE)0007.tif"},
-    {"15", IMAGES + "(BARCODE)0015.tif"},
-    {"5",  IMAGES + "BG_0005.tif"},
-    {"12", IMAGES + "BG_0012.tif"},
-    {"14", IMAGES + "BG_0014.tif"},
-};
+const std::string INPUT_DIR = REPOROOT + "/images/input/";
+const std::string OUTPUT_DIR = REPOROOT + "/images/ouput/";
 
 std::string loadKernelSource(const std::string& filePath) {
     std::ifstream file(filePath);
@@ -298,6 +291,34 @@ void visualizeLabelBoundaries(const std::string& inputImagePath,
     cv::imwrite(outputImagePath, image);
 }
 
+std::vector<std::string> findImageFiles(const std::string& directoryPath) {
+    std::vector<std::string> imageFiles;
+    std::vector<std::string> imageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff" };
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::recursive_directory_iterator(directoryPath)) {
+        if (entry.is_regular_file()) {
+            std::string extension = entry.path().extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(), ::tolower);
+            if (std::find(imageExtensions.begin(), imageExtensions.end(), extension) != imageExtensions.end()) {
+                imageFiles.push_back(entry.path().string());
+            }
+        }
+    }
+
+    return imageFiles;
+}
+
+std::string getOutputFilePath(const std::string& path) {
+    std::filesystem::path inputPath(path);
+    std::filesystem::path outputDir = inputPath.parent_path() / "../output";
+
+    std::string baseName = inputPath.stem().string();  // e.g., "image"
+    std::string newFilename = baseName + "_out.png";   // e.g., "image_out.png"
+
+    std::filesystem::path fullOutputPath = outputDir / newFilename;
+    return fullOutputPath.lexically_normal().string();
+}
+
 
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
@@ -306,23 +327,26 @@ int main(int argc, char* args[]) {
     std::ostringstream oss;
     oss << "Logging Timing Raport\n";
 
-    int operation_type = std::stoi(args[1]);
-    int platformIndex = std::stoi(args[2]);
-    const std::string image_path = IMAGES_MAP.at(args[3]);
-    const int clusteringCycles = (argc > 4) ? std::stoi(args[4]) : NUM_ITERATIONS;
-    int expected_numClusters = (argc > 5) ? std::stoi(args[5]) : NUM_SUPERPIXELS;
-    const float compactness_factor = static_cast<float>((argc > 6) ? std::stoi(args[6]) : 10.0f);
+    int imgs_quantity = std::stoi(args[1]);  // 0 for all in input dir
+    int platformIndex = std::stoi(args[2]);  //Platfrom dependent
+    const int clusteringCycles = (argc > 3) ? std::stoi(args[3]) : NUM_ITERATIONS; 
+    int expected_numClusters = (argc > 4) ? std::stoi(args[4]) : NUM_SUPERPIXELS;
+    const float compactness_factor = static_cast<float>((argc > 5) ? std::stoi(args[5]) : 10.0f);
 
-    TRACE("Operation type: %s", operation_type ? "all images" : "one image");
+    TRACE("Operation type: %s", imgs_quantity ? "all images" : "one image");
     std::queue<std::string> images_path_queue;
-    if (operation_type == 0) // Just one image
+    if (imgs_quantity != 0) // Just one image
     {
-        images_path_queue.push(image_path);
+        for (size_t i = 0; i < MIN(imgs_quantity, argc-6); ++i)
+        {
+            images_path_queue.push(INPUT_DIR + args[6+i]);
+        }
     }
     else
     {
-        for (const auto& pair : IMAGES_MAP) {
-            images_path_queue.push(pair.second);
+        std::vector<std::string> files = findImageFiles(INPUT_DIR);
+        for (const std::string& file : files) {
+            images_path_queue.push(file);
         }
     }
     
@@ -358,6 +382,7 @@ int main(int argc, char* args[]) {
     {
         auto currentImagePath = images_path_queue.front();
         images_path_queue.pop();
+        std::string outputFilePath = getOutputFilePath(currentImagePath);
 
         TRACE("Dequeuing %s", currentImagePath.c_str());
         oss << "\t Processing " << currentImagePath << '\n';
@@ -419,18 +444,6 @@ int main(int argc, char* args[]) {
         std::vector<int> initLabels(width * height, -1);
         clEnqueueWriteBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * initLabels.size(), initLabels.data(), 0, nullptr, nullptr);
 
-        cv::Mat labelImg = cv::Mat::zeros(height, width, CV_8UC1);
-        TRACE("Labels Size: %ld", labels.size());
-        // for (int i = 0; i < labels.size(); ++i){
-        //     labelImg.data[i] = static_cast<uchar>((labels[i] * 17) % 255);
-        // }
-        for (int i = 0; i < height; ++i){
-            for (int j = 0; j < width; ++j){
-                labelImg.at<uchar>(i, j)  = static_cast<uchar>((labels[i*width+j] * 17) % 255);
-            }
-        }
-        cv::imwrite(IMAGES + "label_image.jpg", labelImg);
-
         std::vector<int> clusterSums(numClusters * 5, 0); // Use integers for clusterSums
         cl_mem clusterSumBuffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR,
                                                 sizeof(int) * clusterSums.size(), clusterSums.data(), &err);
@@ -462,9 +475,7 @@ int main(int argc, char* args[]) {
             clEnqueueReadBuffer(queue, clusterSumBuffer, CL_TRUE, 0, sizeof(int) * clusterSums.size(), clusterSums.data(), 0, nullptr, nullptr);
             clEnqueueReadBuffer(queue, clusterCountBuffer, CL_TRUE, 0, sizeof(int) * clusterCounts.size(), clusterCounts.data(), 0, nullptr, nullptr);
             clEnqueueReadBuffer(queue, labelBuffer, CL_TRUE, 0, sizeof(int) * labels.size(), labels.data(), 0, nullptr, nullptr);
-            std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
-            TRACE("Visualizing boundaries")
-            visualizeLabelBoundaries(currentImagePath, outputPath, labels, width, height, numClusters);
+            //std::string outputPath = IMAGES + "superpixel_regions_iter_" + std::to_string(iter + 1) + ".jpg";
 
             for (int i = 0; i < numClusters; ++i) {
                 int count = clusterCounts[i];
@@ -485,6 +496,8 @@ int main(int argc, char* args[]) {
             TRACE("Clustering iteration %d took %ld ms", iter + 1, cycle_duration);
             oss << "\t\t Duration " << cycle_duration << " ms\n";
         }
+        TRACE("Visualizing boundaries")
+        visualizeLabelBoundaries(currentImagePath, outputFilePath, labels, width, height, numClusters);
         // Cleanup
         TRACE("Releasing Mem Objects");
         clReleaseMemObject(clusterSumBuffer);
