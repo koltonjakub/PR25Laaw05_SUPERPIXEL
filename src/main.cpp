@@ -306,6 +306,7 @@ int main(int argc, char* args[]) {
     int expected_numClusters = (argc > 5) ? std::stoi(args[5]) : NUM_SUPERPIXELS;
     const float compactness_factor = static_cast<float>((argc > 6) ? std::stoi(args[6]) : 10.0f);
 
+    TRACE("Operation type: %s", operation_type ? "all images" : "one image");
     std::queue<std::string> images_path_queue;
     if (operation_type == 0) // Just one image
     {
