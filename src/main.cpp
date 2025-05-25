@@ -27,7 +27,21 @@ const std::string KERNEL_FILE = KERNELS + "kernels.cl";
 const std::string IMAGES = REPOROOT + "/images/";
 const std::string INPUT_DIR = REPOROOT + "/images/input/";
 const std::string OUTPUT_DIR = REPOROOT + "/images/ouput/";
+const int NUM_ITERATIONS = 10;
+const int NUM_SUPERPIXELS = 100;
 
+/**
+ * @brief Loads the contents of an OpenCL kernel source file into a string.
+ *
+ * This function opens the file specified by the given file path, reads its entire
+ * contents, and returns it as a standard string. It is typically used to load
+ * OpenCL or CUDA kernel code stored in a separate `.cl` or `.cu` file.
+ *
+ * @param filePath The path to the kernel source file.
+ * @return A string containing the full contents of the kernel source file.
+ *
+ * @throws std::runtime_error If the file cannot be opened.
+ */
 std::string loadKernelSource(const std::string& filePath) {
     std::ifstream file(filePath);
     if (!file.is_open()) throw std::runtime_error("Failed to open kernel file: " + filePath);
@@ -36,6 +50,20 @@ std::string loadKernelSource(const std::string& filePath) {
     return oss.str();
 }
 
+/**
+ * @brief Selects the first available OpenCL device from a specified platform.
+ *
+ * This function retrieves the list of OpenCL devices associated with the platform
+ * at the given index and returns the first available device. It supports all device
+ * types (CPU, GPU, etc.).
+ *
+ * @param platformIndex The index of the desired platform in the `platforms` array.
+ * @param platforms Pointer to an array of OpenCL platform IDs.
+ * @param platformCount The total number of available platforms.
+ * @return The first available OpenCL device (`cl_device_id`) on the specified platform.
+ *
+ * @throws std::runtime_error If the platform index is out of bounds or if no devices are found on the selected platform.
+ */
 cl_device_id selectDevice(int platformIndex, cl_platform_id* platforms, unsigned int platformCount) {
     if (platformIndex >= static_cast<int>(platformCount)) throw std::runtime_error("Invalid platform index.");
     cl_device_id devices[64];
@@ -45,6 +73,18 @@ cl_device_id selectDevice(int platformIndex, cl_platform_id* platforms, unsigned
     return devices[0]; // Default: first device
 }
 
+/**
+ * @brief Loads an image from a file and converts it to RGBA format.
+ *
+ * This function reads an image from the specified file path using OpenCV,
+ * verifies that the image was successfully loaded, and then converts it from
+ * BGR (the default format returned by OpenCV) to RGBA format.
+ *
+ * @param path The path to the image file.
+ * @return A cv::Mat object containing the image in RGBA format.
+ *
+ * @throws std::runtime_error If the image cannot be loaded (e.g., file not found or unsupported format).
+ */
 cv::Mat loadAndConvertImage(const std::string& path) {
     cv::Mat img = cv::imread(path);
     if (img.empty()) throw std::runtime_error("Failed to load image.");
@@ -53,6 +93,21 @@ cv::Mat loadAndConvertImage(const std::string& path) {
     return rgba;
 }
 
+/**
+ * @brief Creates an OpenCL image object.
+ *
+ * This function wraps the `clCreateImage` API call to create an OpenCL image
+ * with the specified context, memory flags, format, description, and optional host pointer.
+ *
+ * @param context The OpenCL context in which to create the image.
+ * @param flags Memory flags specifying allocation and usage (e.g., `CL_MEM_READ_ONLY`, `CL_MEM_COPY_HOST_PTR`).
+ * @param format The image format descriptor (e.g., channel order and data type).
+ * @param desc The image description, including type, dimensions, and layout.
+ * @param hostPtr Optional pointer to the host memory to use as the backing store.
+ * @return A `cl_mem` handle representing the created OpenCL image.
+ *
+ * @note The function uses an assertion to ensure that image creation succeeded. If `CL_SUCCESS` is not returned, the program will abort in debug builds.
+ */
 cl_mem createImage(cl_context context, cl_mem_flags flags, cl_image_format format,
                    cl_image_desc desc, void* hostPtr = nullptr) {
     cl_int result;
@@ -61,6 +116,21 @@ cl_mem createImage(cl_context context, cl_mem_flags flags, cl_image_format forma
     return image;
 }
 
+/**
+ * @brief Creates and builds an OpenCL program from source code.
+ *
+ * This function creates an OpenCL program object from the given source code string
+ * and compiles it for the specified device. If the build fails, the build log is
+ * printed to standard error and the application exits.
+ *
+ * @param context The OpenCL context in which to create the program.
+ * @param device The OpenCL device for which the program will be built.
+ * @param source The source code of the OpenCL program as a string.
+ * @return A `cl_program` object representing the built OpenCL program.
+ *
+ * @note If program creation fails, an `assert` is triggered. If program build fails,
+ * the build log is printed and the application terminates with `exit(-1)`.
+ */
 cl_program buildProgram(cl_context context, cl_device_id device, const std::string& source) {
     const char* src = source.c_str();
     size_t len = source.length();
@@ -79,6 +149,22 @@ cl_program buildProgram(cl_context context, cl_device_id device, const std::stri
     return program;
 }
 
+/**
+ * @brief Reads an OpenCL image object and writes it to a file using OpenCV.
+ *
+ * This function reads pixel data from a 2D OpenCL image object into a `cv::Mat`,
+ * then saves it to disk at the specified file path using OpenCV's `imwrite`.
+ *
+ * @param path The file path where the image will be saved.
+ * @param queue The OpenCL command queue used to enqueue the read operation.
+ * @param image The OpenCL image object (`cl_mem`) to be read.
+ * @param width The width of the image in pixels.
+ * @param height The height of the image in pixels.
+ * @param type (Optional) OpenCV image type (e.g., `CV_8UC4`). Defaults to `CV_8UC4` (8-bit RGBA).
+ *
+ * @note The function uses `assert` to ensure that the image read operation was successful.
+ * If the assertion fails, the application will terminate in debug builds.
+ */
 void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
                 int width, int height, int type = CV_8UC4) {
     cv::Mat output(height, width, type);
@@ -89,7 +175,29 @@ void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
     cv::imwrite(path, output);
 }
 
-
+/**
+ * @brief Initializes cluster centers on a grid over the image, guided by a binary mask.
+ *
+ * This function places cluster centers (typically for image segmentation or clustering tasks)
+ * across the input image in a uniform grid layout. The number of clusters may be adjusted
+ * to fit a complete grid. The placement is guided by a binary mask image: clusters are
+ * placed preferentially in regions where the mask is non-zero, with sparse fallback
+ * sampling in unmasked regions.
+ *
+ * Each cluster center stores five values: H, S, V color components (defaulted to 0.5),
+ * and the (x, y) coordinates in the image.
+ *
+ * @param width Width of the target image in pixels.
+ * @param height Height of the target image in pixels.
+ * @param numClusters Input/output parameter. Initially specifies the desired number of clusters;
+ *                    will be adjusted to match the number of grid cells.
+ * @param clusterData Output vector to store cluster descriptors (H, S, V, x, y) per cluster.
+ * @param MaskImagePath Path to a grayscale mask image. Non-zero pixels indicate preferred
+ *                      regions for cluster placement.
+ *
+ * @note If the mask image cannot be loaded, the function prints an error and returns early.
+ * @note Sparse clusters are still added in blank regions using a sampling pattern (every 8th grid cell).
+ */
 void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData, const std::string& MaskImagePath) {
     // Estimate grid dimensions based on aspect ratio and target cluster count
     int gridCols = static_cast<int>(std::sqrt((float)numClusters * width / height));
@@ -146,10 +254,15 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
     TRACE("Adjusted numClusters = %d (%d × %d grid)", numClusters, gridCols, gridRows);
 }
 
-
-const int NUM_ITERATIONS = 10;
-const int NUM_SUPERPIXELS = 100;
-
+/**
+ * @brief Checks the result of an OpenCL operation and exits on failure.
+ *
+ * Prints an error message and terminates the program if the given result
+ * is not `CL_SUCCESS`.
+ *
+ * @param result The OpenCL error code to check.
+ * @param message A message to display if the result indicates failure.
+ */
 void assertCLSuccess(cl_int result, const char* message) {
     if (result != CL_SUCCESS) {
         std::cerr << message << " Error Code: " << result << std::endl;
@@ -157,36 +270,23 @@ void assertCLSuccess(cl_int result, const char* message) {
     }
 }
 
-std::tuple<cl_context, cl_command_queue> createOpenCLContextAndQueue(cl_device_id device) {
-    cl_int result;
-    cl_context context = clCreateContext(nullptr, 1, &device, nullptr, nullptr, &result);
-    assertCLSuccess(result, "Failed to create OpenCL context");
-
-    cl_command_queue_properties props[] = {0};
-    cl_command_queue queue = clCreateCommandQueueWithProperties(context, device, props, &result);
-    assertCLSuccess(result, "Failed to create command queue");
-
-    return {context, queue};
-}
-
-cv::Mat loadAndConvertImage(const std::string& path, cl_context context, cl_mem& imageCL, cl_image_format format, cl_image_desc desc) {
-    TRACE("Loading image %s", path.c_str());
-    cv::Mat img = cv::imread(path);
-    if (img.empty()) {
-        std::cerr << "Image load failed: " << path << std::endl;
-        std::exit(EXIT_FAILURE);
-    }
-
-    cv::Mat imgRGBA;
-    cv::cvtColor(img, imgRGBA, cv::COLOR_BGR2RGBA);
-
-    cl_int result;
-    imageCL = clCreateImage(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, &format, &desc, imgRGBA.data, &result);
-    assertCLSuccess(result, "Failed to create OpenCL image");
-
-    return imgRGBA;
-}
-
+/**
+ * @brief Runs an OpenCL kernel to assign each pixel to the nearest cluster.
+ *
+ * Sets kernel arguments and launches a 2D kernel over the image to compute
+ * pixel-to-cluster assignments based on color and spatial proximity.
+ *
+ * @param queue OpenCL command queue.
+ * @param kernel OpenCL kernel for assignment.
+ * @param hsv_image HSV image buffer.
+ * @param width Image width.
+ * @param height Image height.
+ * @param clusterBuffer Buffer with cluster data.
+ * @param numClusters Number of clusters.
+ * @param m Compactness factor.
+ * @param labelBuffer Output buffer for pixel labels.
+ * @param distanceBuffer Output buffer for distances.
+ */
 void runAssignPixelsToClusters(cl_command_queue queue, cl_kernel kernel, cl_mem hsv_image, int width, int height,
                                 cl_mem clusterBuffer, int numClusters, float m, cl_mem labelBuffer, cl_mem distanceBuffer) {
     clSetKernelArg(kernel, 0, sizeof(cl_mem), &hsv_image);
@@ -204,6 +304,22 @@ void runAssignPixelsToClusters(cl_command_queue queue, cl_kernel kernel, cl_mem 
     clFinish(queue);
 }
 
+/**
+ * @brief Runs an OpenCL kernel to update cluster sums and counts based on pixel assignments.
+ *
+ * Sets kernel arguments and launches a 2D kernel that accumulates HSV values and counts
+ * for each cluster from the labeled pixels.
+ *
+ * @param queue OpenCL command queue.
+ * @param updateKernel Kernel to update cluster data.
+ * @param hsv_image HSV image buffer.
+ * @param labelBuffer Buffer with pixel cluster labels.
+ * @param width Image width.
+ * @param height Image height.
+ * @param numClusters Number of clusters.
+ * @param clusterSumBuffer Buffer to accumulate cluster HSV sums.
+ * @param clusterCountBuffer Buffer to accumulate cluster pixel counts.
+ */
 void runUpdateClusters(cl_command_queue queue, cl_kernel updateKernel, cl_mem hsv_image, cl_mem labelBuffer,
                        int width, int height, int numClusters, cl_mem clusterSumBuffer, cl_mem clusterCountBuffer) {
     clSetKernelArg(updateKernel, 0, sizeof(cl_mem), &hsv_image);
@@ -220,30 +336,22 @@ void runUpdateClusters(cl_command_queue queue, cl_kernel updateKernel, cl_mem hs
     clFinish(queue);
 }
 
-void visualizeLabels(const std::string& path, const std::vector<int>& labels,
-                     int width, int height, int numClusters) {
-    cv::Mat image(height, width, CV_8UC3);
-    std::vector<cv::Vec3b> colors(numClusters);
-
-    // Assign random colors to each cluster
-    cv::RNG rng(12345);
-    for (int i = 0; i < numClusters; ++i) {
-        colors[i] = cv::Vec3b(rng.uniform(0, 255), rng.uniform(0, 255), rng.uniform(0, 255));
-    }
-
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            int label = labels[y * width + x];
-            if (label >= 0 && label < numClusters)
-                image.at<cv::Vec3b>(y, x) = colors[label];
-            else
-                image.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 0); // fallback for invalid label
-        }
-    }
-
-    cv::imwrite(path, image);
-}
-
+/**
+ * @brief Visualizes cluster boundaries by overlaying them on the original image.
+ *
+ * Loads an input image and highlights the boundaries between different cluster labels
+ * by coloring boundary pixels in red. The resulting image is saved to the specified output path.
+ *
+ * @param inputImagePath Path to the input image file.
+ * @param outputImagePath Path where the output image with boundaries will be saved.
+ * @param labels A vector of cluster labels for each pixel (size = width * height).
+ * @param width Width of the image in pixels.
+ * @param height Height of the image in pixels.
+ * @param numClusters Number of clusters (not used directly but kept for interface consistency).
+ *
+ * @note The function assumes `labels` are arranged in row-major order.
+ * @note If the input image cannot be loaded or dimensions mismatch, the function prints an error and returns.
+ */
 void visualizeLabelBoundaries(const std::string& inputImagePath,
                               const std::string& outputImagePath,
                               const std::vector<int>& labels,
@@ -291,6 +399,15 @@ void visualizeLabelBoundaries(const std::string& inputImagePath,
     cv::imwrite(outputImagePath, image);
 }
 
+/**
+ * @brief Recursively finds image files in a directory with common image extensions.
+ *
+ * Searches the given directory and all its subdirectories for files with extensions
+ * matching common image formats (.jpg, .jpeg, .png, .bmp, .tif, .tiff).
+ *
+ * @param directoryPath The path to the directory to search.
+ * @return A vector of strings containing full file paths to the found image files.
+ */
 std::vector<std::string> findImageFiles(const std::string& directoryPath) {
     std::vector<std::string> imageFiles;
     std::vector<std::string> imageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff" };
@@ -308,6 +425,18 @@ std::vector<std::string> findImageFiles(const std::string& directoryPath) {
     return imageFiles;
 }
 
+/**
+ * @brief Constructs an output file path in an 'output' directory relative to the input file.
+ *
+ * Given an input file path, this function generates a corresponding output file path
+ * by placing the output in a sibling directory named "output" and appending "_out.png"
+ * to the input file's base name.
+ *
+ * Example: For input "/path/to/image.jpg", the output path will be "/path/output/image_out.png".
+ *
+ * @param path The input file path.
+ * @return The constructed output file path as a string.
+ */
 std::string getOutputFilePath(const std::string& path) {
     std::filesystem::path inputPath(path);
     std::filesystem::path outputDir = inputPath.parent_path() / "../output";
