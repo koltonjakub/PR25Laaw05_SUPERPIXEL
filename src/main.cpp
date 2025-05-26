@@ -575,9 +575,9 @@ int main(int argc, char* args[]) {
         assertCLSuccess(err, "Kernel enqueue failed");
         clFinish(queue);
 
-        TRACE("Writing HSV and mask");
-        writeImage(IMAGES + "mask_image.jpg", queue, mask_image, width, height);
-        writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
+        // TRACE("Writing HSV and mask");
+        // writeImage(IMAGES + "mask_image.jpg", queue, mask_image, width, height);
+        // writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
 
         TRACE("Initializing Superpixels Structures");
         int numClusters = expected_numClusters;
