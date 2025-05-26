@@ -54,8 +54,7 @@ const int NUM_SUPERPIXELS = 100;
  * @brief Loads the contents of an OpenCL kernel source file into a string.
  *
  * This function opens the file specified by the given file path, reads its entire
- * contents, and returns it as a standard string. It is typically used to load
- * OpenCL or CUDA kernel code stored in a separate `.cl` or `.cu` file.
+ * contents, and returns it as a standard string.
  *
  * @param filePath The path to the kernel source file.
  * @return A string containing the full contents of the kernel source file.
