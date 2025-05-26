@@ -18,7 +18,7 @@
 #include <opencv2/imgproc.hpp>
 
 #define TRACE(fmt, ...)                                                            \
-    { printf("[TRACE_FMT] %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); };
+    //{ printf("[TRACE_FMT] %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); };
 
 const std::string REPOROOT = std::filesystem::current_path().parent_path().string() + "/PR25Laaw05_SUPERPIXEL";
 // const std::string REPOROOT = std::filesystem::current_path().parent_path().string();
@@ -176,6 +176,31 @@ void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
 }
 
 /**
+ * @brief Extracts an OpenCL 2D image into a cv::Mat.
+ *
+ * This function reads pixel data from a 2D OpenCL image (`cl_mem`) and
+ * returns it as an OpenCV `cv::Mat`.
+ *
+ * @param queue The OpenCL command queue used to read the image.
+ * @param image The OpenCL image object to be read.
+ * @param width The image width in pixels.
+ * @param height The image height in pixels.
+ * @param type (Optional) OpenCV image type (default: CV_8UC4 for RGBA).
+ * @return cv::Mat The image data as an OpenCV matrix.
+ */
+cv::Mat extractImage(cl_command_queue queue, cl_mem image,
+                     int width, int height, int type = CV_8UC4) {
+    cv::Mat output(height, width, type);
+    size_t origin[3] = {0, 0, 0};
+    size_t region[3] = {static_cast<size_t>(width), static_cast<size_t>(height), 1};
+
+    cl_int err = clEnqueueReadImage(queue, image, CL_TRUE, origin, region, 0, 0, output.data, 0, nullptr, nullptr);
+    assert(err == CL_SUCCESS && "Failed to read OpenCL image");
+
+    return output;
+}
+
+/**
  * @brief Initializes cluster centers on a grid over the image, guided by a binary mask.
  *
  * This function places cluster centers (typically for image segmentation or clustering tasks)
@@ -198,7 +223,7 @@ void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
  * @note If the mask image cannot be loaded, the function prints an error and returns early.
  * @note Sparse clusters are still added in blank regions using a sampling pattern (every 8th grid cell).
  */
-void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData, const std::string& MaskImagePath) {
+void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData, cv::Mat mask_image_mat) {
     // Estimate grid dimensions based on aspect ratio and target cluster count
     int gridCols = static_cast<int>(std::sqrt((float)numClusters * width / height));
     int gridRows = static_cast<int>(std::ceil((float)numClusters / gridCols));
@@ -211,11 +236,6 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
     float stepX = static_cast<float>(width) / gridCols;
     float stepY = static_cast<float>(height) / gridRows;
 
-    cv::Mat mask_img = cv::imread(MaskImagePath, cv::IMREAD_GRAYSCALE);
-    if (mask_img.empty()) {
-        std::cerr << "Error: Failed to load mask image: " << MaskImagePath << std::endl;
-        return;
-    }
     const int blank_divider = 8;
 
     int c = 0;
@@ -229,7 +249,7 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
             if (cy >= height) cy = height - 1;
 
             //fix this code
-            if (mask_img.at<uchar>(cy, cx) > 0)
+            if (mask_image_mat.at<uchar>(cy, cx) > 0)
             {
                 clusterData.push_back(0.5f);      // H
                 clusterData.push_back(0.5f);      // S
@@ -509,6 +529,12 @@ int main(int argc, char* args[]) {
             images_path_queue.push(file);
         }
     }
+
+    oss << "Images quantity: " << imgs_quantity << "\n";
+    oss << "Platform index: " << platformIndex << "\n";
+    oss << "Clustering cycles: " << clusteringCycles << "\n";
+    oss << "Expected number of clusters: " << expected_numClusters << "\n";
+    oss << "Compactness factor: " << compactness_factor << "\n";
     
     // OpenCL Setup
     TRACE("Initializing Platform");
@@ -545,7 +571,7 @@ int main(int argc, char* args[]) {
         std::string outputFilePath = getOutputFilePath(currentImagePath);
 
         TRACE("Dequeuing %s", currentImagePath.c_str());
-        oss << "\t Processing " << currentImagePath << '\n';
+        oss << "\tProcessing " << currentImagePath << '\n';
 
         auto image_start = std::chrono::high_resolution_clock::now();
         cv::Mat sourceRGBA = loadAndConvertImage(currentImagePath);
@@ -578,11 +604,14 @@ int main(int argc, char* args[]) {
         // TRACE("Writing HSV and mask");
         // writeImage(IMAGES + "mask_image.jpg", queue, mask_image, width, height);
         // writeImage(IMAGES + "hsv_image.jpg", queue, hsv_image, width, height);
+        TRACE("Getting HSV and mask");
+        cv::Mat mask_image_mat = extractImage(queue, mask_image, width, height);
+        cv::Mat hsv_image_mat = extractImage(queue, hsv_image, width, height);
 
         TRACE("Initializing Superpixels Structures");
         int numClusters = expected_numClusters;
         std::vector<float> clusterData(0);
-        createInitialClusters(width, height, numClusters, clusterData, IMAGES + "mask_image.jpg");
+        createInitialClusters(width, height, numClusters, clusterData, mask_image_mat);
 
         cl_mem clusterBuffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                                             sizeof(float) * clusterData.size(), clusterData.data(), &err);
@@ -676,7 +705,7 @@ int main(int argc, char* args[]) {
         auto image_end = std::chrono::high_resolution_clock::now();
         auto image_duration = std::chrono::duration_cast<std::chrono::milliseconds>(image_end - image_start).count();
         TRACE("Finished processing image %s in %ld ms", currentImagePath.c_str(), image_duration);
-        oss << "\t Duration: " << image_duration << " ms\n";
+        oss << "\tDuration: " << image_duration << " ms\n";
     }
 
     TRACE("Releasing Other");
