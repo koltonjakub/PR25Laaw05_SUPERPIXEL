@@ -1,3 +1,12 @@
+/**
+ * @brief Converts an RGB color to HSV.
+ *
+ * Takes a float3 RGB color and returns a float4 HSV representation.
+ * Hue is normalized to [0.0, 1.0]. Saturation and value are also in [0.0, 1.0].
+ *
+ * @param c Input RGB color as float3, with components in [0.0, 1.0].
+ * @return float4 HSV color: (h, s, v, 0.0).
+ */
 float4 rgb_to_hsv(float3 c) {
     float r = c.x;
     float g = c.y;
@@ -28,6 +37,17 @@ float4 rgb_to_hsv(float3 c) {
 
 __constant sampler_t imageSampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_LINEAR;
 
+/**
+ * @brief Converts an input RGBA image to HSV and creates a binary mask.
+ *
+ * Each pixel is converted from RGB to HSV and written to HSVImage.
+ * A binary mask is generated in MaskImage based on HSV thresholds,
+ * detecting pixels that meet specific hue, saturation, and value ranges.
+ *
+ * @param inputImage   Input image in RGBA format.
+ * @param MaskImage    Output binary mask image (1.0 for match, 0.0 otherwise).
+ * @param HSVImage     Output HSV image.
+ */
 __kernel void hsv_binary_filter(read_only image2d_t inputImage,
                                 write_only image2d_t MaskImage,
                                 write_only image2d_t HSVImage) 
@@ -51,6 +71,21 @@ __kernel void hsv_binary_filter(read_only image2d_t inputImage,
 
 const float PRECISION = 100000.0f; // Precision for HSV values
 
+/**
+ * @brief Assigns each pixel to the nearest cluster based on HSV and spatial distance.
+ *
+ * Computes a combined distance metric (color + position) for each pixel to all clusters,
+ * assigning it to the one with the lowest value.
+ *
+ * @param hsvImage   Input HSV image (H, S, V in float4).
+ * @param width      Image width.
+ * @param height     Image height.
+ * @param clusters   Cluster data [H, S, V, x, y] scaled (length: numClusters * 5).
+ * @param numClusters Number of clusters.
+ * @param m          Compactness factor (controls spatial vs. color influence).
+ * @param labels     Output: assigned cluster index per pixel.
+ * @param distances  Output: distance to assigned cluster per pixel.
+ */
 __kernel void assignPixelsToClusters(
     read_only image2d_t hsvImage,       // combined HSV input image
     const int width,
@@ -109,7 +144,22 @@ __kernel void assignPixelsToClusters(
     distances[idx] = minDist;
 }
 
-
+/**
+ * @brief Accumulates HSV and spatial values for each cluster.
+ *
+ * Each pixel contributes its HSV values and (x, y) position to its assigned cluster.
+ * The data is accumulated into `clusterSums` and `clusterCounts` using atomic ops.
+ *
+ * @param hsvImage       Input HSV image (float4 per pixel).
+ * @param labels         Per-pixel cluster labels (size: width * height).
+ * @param width          Image width.
+ * @param height         Image height.
+ * @param numClusters    Number of superpixel clusters.
+ * @param clusterSums    Accumulated [H, S, V, x, y] per cluster (scaled ints).
+ * @param clusterCounts  Pixel count per cluster.
+ *
+ * @note HSV values are scaled by PRECISION and summed atomically.
+ */
 __kernel void updateClusters(
     read_only image2d_t hsvImage,            // Combined HSV image
     __global const int* labels,              // Assigned labels per pixel

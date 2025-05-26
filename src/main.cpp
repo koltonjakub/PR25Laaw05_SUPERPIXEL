@@ -448,7 +448,38 @@ std::string getOutputFilePath(const std::string& path) {
     return fullOutputPath.lexically_normal().string();
 }
 
-
+/**
+ * @brief Entry point of the PR25LAAW05_SUPERPIXEL application.
+ *
+ * This application performs superpixel segmentation on a single image or a batch of images
+ * using OpenCL acceleration. It converts input images to HSV format, applies a binary filter,
+ * and then clusters pixels into superpixels using an iterative approach. The boundaries of
+ * superpixels are then visualized and saved.
+ *
+ * @param argc The number of command-line arguments.
+ * @param args The array of command-line arguments:
+ * - `args[1]` - Number of images to process (0 for all images in `INPUT_DIR`, >0 for specific images).
+ * - `args[2]` - OpenCL platform index to use.
+ * - `args[3]` - (Optional) Number of clustering cycles (default: `NUM_ITERATIONS`).
+ * - `args[4]` - (Optional) Expected number of superpixels/clusters (default: `NUM_SUPERPIXELS`).
+ * - `args[5]` - (Optional) Compactness factor for clustering (default: 10.0f).
+ * - `args[6+]` - (Optional) Image filenames if `imgs_quantity > 0`.
+ *
+ * @return Returns 0 on successful completion.
+ *
+ * @details
+ * Steps performed:
+ * - Parses command-line arguments.
+ * - Initializes OpenCL platform, context, and device.
+ * - Loads and builds the OpenCL kernel program.
+ * - For each image:
+ *   - Loads image and converts it to HSV space using an OpenCL kernel.
+ *   - Applies a binary HSV filter to generate a mask.
+ *   - Initializes clusters and iteratively refines them based on pixel distance and color similarity.
+ *   - Visualizes superpixel boundaries and saves the output.
+ *   - Measures and logs processing time for each step.
+ * - Releases OpenCL resources after processing.
+ */
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
     auto program_start = std::chrono::high_resolution_clock::now();
