@@ -44,3 +44,5 @@ Dane/**
 /out
 
 /.venv
+/working
+/.vscode

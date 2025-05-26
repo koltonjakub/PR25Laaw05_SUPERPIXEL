@@ -238,6 +238,9 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
 
     const int blank_divider = 8;
 
+    cv::Mat mask_gray;
+    cv::cvtColor(mask_image_mat, mask_gray, cv::COLOR_RGBA2GRAY);
+
     int c = 0;
     for (int row = 0; row < gridRows; ++row) {
         for (int col = 0; col < gridCols; ++col) {
@@ -249,7 +252,7 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
             if (cy >= height) cy = height - 1;
 
             //fix this code
-            if (mask_image_mat.at<uchar>(cy, cx) > 0)
+            if (mask_gray.at<uchar>(cy, cx) > 0)
             {
                 clusterData.push_back(0.5f);      // H
                 clusterData.push_back(0.5f);      // S
