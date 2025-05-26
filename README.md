@@ -11,7 +11,7 @@ OpenCL:
     ICD loader Name                                 OpenCL ICD Loader
     ICD loader Vendor                               OCL Icd free software
     ICD loader Version                              2.3.2
-    ICD loader Profile                              OpenCL 3.0
+    ICD loader Profile                              OpenCL 1.2
 OpenCV: 4.6.0
 
 ### List of compatible drivers:
