@@ -1,3 +1,23 @@
+/**
+ * @file        main.cpp
+ * @brief       PR25LAAW05_SUPERPIXEL application.
+ * @author      Jan Rosa, Karolina Piotrowska, Jakub Kołton
+ * @date        2025-05-4
+ * @version     1.0
+ *
+ * @details
+ * This file contains the application responsible for orchestrating the 
+ * superpixel segmentation pipeline using OpenCL. The program supports batch 
+ * and single-image processing with optional tuning of clustering parameters.
+ *
+ * Key features:
+ * - OpenCL accelerated image conversion and clustering.
+ * - HSV binary filtering.
+ * - Iterative superpixel refinement.
+ * - Visual output with superpixel boundary overlays.
+ * - Command-line interface for flexible usage.
+ */
+
 #include <CL/cl.h>
 #include <iostream>
 #include <cassert>
@@ -18,7 +38,7 @@
 #include <opencv2/imgproc.hpp>
 
 #define TRACE(fmt, ...)                                                            \
-    //{ printf("[TRACE_FMT] %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); };
+    // { printf("[TRACE_FMT] %s:%d: " fmt "\n", __FILE__, __LINE__, ##__VA_ARGS__); };
 
 const std::string REPOROOT = std::filesystem::current_path().parent_path().string() + "/PR25Laaw05_SUPERPIXEL";
 // const std::string REPOROOT = std::filesystem::current_path().parent_path().string();
@@ -687,6 +707,9 @@ int main(int argc, char* args[]) {
             auto cycle_duration = std::chrono::duration_cast<std::chrono::milliseconds>(cycle_end - cycle_start).count();
             TRACE("Clustering iteration %d took %ld ms", iter + 1, cycle_duration);
             oss << "\t\t Duration " << cycle_duration << " ms\n";
+            // std::ostringstream oss2;
+            // oss2 << outputFilePath.substr(0, outputFilePath.size() - 4) << "_cycle_" << iter << ".png";
+            // visualizeLabelBoundaries(currentImagePath, oss2.str(), labels, width, height, numClusters);
         }
         TRACE("Visualizing boundaries")
         visualizeLabelBoundaries(currentImagePath, outputFilePath, labels, width, height, numClusters);

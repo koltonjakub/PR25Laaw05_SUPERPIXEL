@@ -18,3 +18,5 @@ target_link_libraries(PR25Laaw05_SUPERPIXEL ${OpenCV_LIBS} OpenCL::OpenCL)
 
 # Add OpenCV include directories
 target_include_directories(PR25Laaw05_SUPERPIXEL PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+target_compile_options(PR25Laaw05_SUPERPIXEL PRIVATE -O3 -march=native -DNDEBUG)

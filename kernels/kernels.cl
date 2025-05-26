@@ -1,4 +1,35 @@
 /**
+ * @file        superpixel_kernels.cl
+ * @brief       OpenCL kernels for PR25LAAW05_SUPERPIXEL application.
+ * @authors     Jan Rosa, Karolina Piotrowska, Jakub Kołton
+ * @date        2025-05-04
+ * @version     1.0
+ *
+ * @details
+ * This file contains all OpenCL kernel implementations used in the 
+ * PR25LAAW05_SUPERPIXEL application for performing GPU-accelerated superpixel 
+ * segmentation. The kernels are designed to execute on OpenCL-capable devices 
+ * and include routines for RGB-to-HSV conversion, binary HSV filtering, 
+ * pixel-to-cluster assignment, and cluster update operations.
+ *
+ * Kernel descriptions:
+ * - `rgb_to_hsv`: Converts RGB colors to HSV format.
+ * - `hsv_binary_filter`: Converts RGBA image to HSV and applies HSV-based binary thresholding.
+ * - `assignPixelsToClusters`: Assigns each pixel to the nearest superpixel cluster based on HSV and spatial distance.
+ * - `updateClusters`: Accumulates HSV and spatial data for each cluster using atomic operations.
+ *
+ * Key features:
+ * - GPU-accelerated image processing using OpenCL.
+ * - HSV color space operations.
+ * - Iterative refinement for superpixel clustering.
+ * - Atomic accumulation for parallel-safe cluster updates.
+ *
+ * @note This file is compiled and used as part of the host application written in C++.
+ */
+
+
+
+/**
  * @brief Converts an RGB color to HSV.
  *
  * Takes a float3 RGB color and returns a float4 HSV representation.
