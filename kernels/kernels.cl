@@ -37,6 +37,8 @@
  *
  * @param c Input RGB color as float3, with components in [0.0, 1.0].
  * @return float4 HSV color: (h, s, v, 0.0).
+ * @author Karolina Piotrowska
+ * @date 06.05.25
  */
 float4 rgb_to_hsv(float3 c) {
     float r = c.x;
@@ -78,6 +80,8 @@ __constant sampler_t imageSampler = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CL
  * @param inputImage   Input image in RGBA format.
  * @param MaskImage    Output binary mask image (1.0 for match, 0.0 otherwise).
  * @param HSVImage     Output HSV image.
+ * @author Karolina Piotrowska
+ * @date 07.05.25
  */
 __kernel void hsv_binary_filter(read_only image2d_t inputImage,
                                 write_only image2d_t MaskImage,
@@ -116,6 +120,8 @@ const float PRECISION = 100000.0f; // Precision for HSV values
  * @param m          Compactness factor (controls spatial vs. color influence).
  * @param labels     Output: assigned cluster index per pixel.
  * @param distances  Output: distance to assigned cluster per pixel.
+ * @author Jan Rosa
+ * @date 07.05.25
  */
 __kernel void assignPixelsToClusters(
     read_only image2d_t hsvImage,       // combined HSV input image
@@ -190,6 +196,9 @@ __kernel void assignPixelsToClusters(
  * @param clusterCounts  Pixel count per cluster.
  *
  * @note HSV values are scaled by PRECISION and summed atomically.
+ *
+ * @author Jan Rosa
+ * @date 06.05.25
  */
 __kernel void updateClusters(
     read_only image2d_t hsvImage,            // Combined HSV image

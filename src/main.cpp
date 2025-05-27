@@ -60,6 +60,8 @@ const int NUM_SUPERPIXELS = 100;
  * @return A string containing the full contents of the kernel source file.
  *
  * @throws std::runtime_error If the file cannot be opened.
+ * @author Karolina Piotrowska
+ * @date 06.05.25
  */
 std::string loadKernelSource(const std::string& filePath) {
     std::ifstream file(filePath);
@@ -82,6 +84,8 @@ std::string loadKernelSource(const std::string& filePath) {
  * @return The first available OpenCL device (`cl_device_id`) on the specified platform.
  *
  * @throws std::runtime_error If the platform index is out of bounds or if no devices are found on the selected platform.
+ * @author Jakub Kołton
+ * @date 07.05.25
  */
 cl_device_id selectDevice(int platformIndex, cl_platform_id* platforms, unsigned int platformCount) {
     if (platformIndex >= static_cast<int>(platformCount)) throw std::runtime_error("Invalid platform index.");
@@ -103,6 +107,8 @@ cl_device_id selectDevice(int platformIndex, cl_platform_id* platforms, unsigned
  * @return A cv::Mat object containing the image in RGBA format.
  *
  * @throws std::runtime_error If the image cannot be loaded (e.g., file not found or unsupported format).
+ * @author Jan Rosa
+ * @date 04.05.25
  */
 cv::Mat loadAndConvertImage(const std::string& path) {
     cv::Mat img = cv::imread(path);
@@ -126,6 +132,8 @@ cv::Mat loadAndConvertImage(const std::string& path) {
  * @return A `cl_mem` handle representing the created OpenCL image.
  *
  * @note The function uses an assertion to ensure that image creation succeeded. If `CL_SUCCESS` is not returned, the program will abort in debug builds.
+ * @author Karolina Piotrowska
+ * @date 06.05.25
  */
 cl_mem createImage(cl_context context, cl_mem_flags flags, cl_image_format format,
                    cl_image_desc desc, void* hostPtr = nullptr) {
@@ -149,6 +157,8 @@ cl_mem createImage(cl_context context, cl_mem_flags flags, cl_image_format forma
  *
  * @note If program creation fails, an `assert` is triggered. If program build fails,
  * the build log is printed and the application terminates with `exit(-1)`.
+ * @author Jakub Kołton
+ * @date 06.05.25
  */
 cl_program buildProgram(cl_context context, cl_device_id device, const std::string& source) {
     const char* src = source.c_str();
@@ -183,6 +193,8 @@ cl_program buildProgram(cl_context context, cl_device_id device, const std::stri
  *
  * @note The function uses `assert` to ensure that the image read operation was successful.
  * If the assertion fails, the application will terminate in debug builds.
+ * @author Jan Rosa
+ * @date 06.05.25
  */
 void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
                 int width, int height, int type = CV_8UC4) {
@@ -206,6 +218,8 @@ void writeImage(const std::string& path, cl_command_queue queue, cl_mem image,
  * @param height The image height in pixels.
  * @param type (Optional) OpenCV image type (default: CV_8UC4 for RGBA).
  * @return cv::Mat The image data as an OpenCV matrix.
+ * @author Karolina Piotrowska
+ * @date 08.05.25
  */
 cv::Mat extractImage(cl_command_queue queue, cl_mem image,
                      int width, int height, int type = CV_8UC4) {
@@ -241,6 +255,8 @@ cv::Mat extractImage(cl_command_queue queue, cl_mem image,
  *
  * @note If the mask image cannot be loaded, the function prints an error and returns early.
  * @note Sparse clusters are still added in blank regions using a sampling pattern (every 8th grid cell).
+ * @author Jan Rosa
+ * @date 07.05.25
  */
 void createInitialClusters(int width, int height, int& numClusters, std::vector<float>& clusterData, cv::Mat mask_image_mat) {
     // Estimate grid dimensions based on aspect ratio and target cluster count
@@ -304,6 +320,8 @@ void createInitialClusters(int width, int height, int& numClusters, std::vector<
  *
  * @param result The OpenCL error code to check.
  * @param message A message to display if the result indicates failure.
+ * @author Karolina Piotrowska
+ * @date 06.05.25
  */
 void assertCLSuccess(cl_int result, const char* message) {
     if (result != CL_SUCCESS) {
@@ -328,6 +346,8 @@ void assertCLSuccess(cl_int result, const char* message) {
  * @param m Compactness factor.
  * @param labelBuffer Output buffer for pixel labels.
  * @param distanceBuffer Output buffer for distances.
+ * @author Jan Rosa
+ * @date 06.05.25
  */
 void runAssignPixelsToClusters(cl_command_queue queue, cl_kernel kernel, cl_mem hsv_image, int width, int height,
                                 cl_mem clusterBuffer, int numClusters, float m, cl_mem labelBuffer, cl_mem distanceBuffer) {
@@ -361,6 +381,8 @@ void runAssignPixelsToClusters(cl_command_queue queue, cl_kernel kernel, cl_mem 
  * @param numClusters Number of clusters.
  * @param clusterSumBuffer Buffer to accumulate cluster HSV sums.
  * @param clusterCountBuffer Buffer to accumulate cluster pixel counts.
+ * @author Karolina Piotrowska
+ * @date 09.05.25
  */
 void runUpdateClusters(cl_command_queue queue, cl_kernel updateKernel, cl_mem hsv_image, cl_mem labelBuffer,
                        int width, int height, int numClusters, cl_mem clusterSumBuffer, cl_mem clusterCountBuffer) {
@@ -393,6 +415,8 @@ void runUpdateClusters(cl_command_queue queue, cl_kernel updateKernel, cl_mem hs
  *
  * @note The function assumes `labels` are arranged in row-major order.
  * @note If the input image cannot be loaded or dimensions mismatch, the function prints an error and returns.
+ * @author Jan Rosa
+ * @date 06.05.25
  */
 void visualizeLabelBoundaries(const std::string& inputImagePath,
                               const std::string& outputImagePath,
@@ -449,6 +473,8 @@ void visualizeLabelBoundaries(const std::string& inputImagePath,
  *
  * @param directoryPath The path to the directory to search.
  * @return A vector of strings containing full file paths to the found image files.
+ * @author Jakub Kołton
+ * @date 12.05.25
  */
 std::vector<std::string> findImageFiles(const std::string& directoryPath) {
     std::vector<std::string> imageFiles;
@@ -478,6 +504,8 @@ std::vector<std::string> findImageFiles(const std::string& directoryPath) {
  *
  * @param path The input file path.
  * @return The constructed output file path as a string.
+ * @author Karolina Piotrowska
+ * @date 06.05.25
  */
 std::string getOutputFilePath(const std::string& path) {
     std::filesystem::path inputPath(path);
@@ -521,6 +549,8 @@ std::string getOutputFilePath(const std::string& path) {
  *   - Visualizes superpixel boundaries and saves the output.
  *   - Measures and logs processing time for each step.
  * - Releases OpenCL resources after processing.
+ * @author Jakub Kołton
+ * @date 06.05.25
  */
 int main(int argc, char* args[]) {
     TRACE("PR25LAAW05_SUPERPIXEL application started");
